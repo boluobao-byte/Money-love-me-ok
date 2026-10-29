@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>口袋荷包 - Pocket Budgeting</title>
+    <!-- iOS Web App 支持与 Safari 状态栏适配 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="口袋荷包">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Alpine.js 交互引擎 -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        cream: {
+                            50: '#FAF9F6',
+                            100: '#F4F3EE',
+                            200: '#E8E6DF'
+                        },
+                        neon: {
+                            DEFAULT: '#D8F828',
+                            hover: '#C2E21E',
+                            light: '#EEFF8C'
+                        }
+                    },
+                    boxShadow: {
+                        'soft': '0 10px 30px -5px rgba(0, 0, 0, 0.05)',
+                        'soft-lg': '0 20px 40px -15px rgba(0, 0, 0, 0.07)',
+                        'lift': '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+                        'capsule': '0 4px 14px 0 rgba(0, 0, 0, 0.25)'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+            background-color: #FAF9F6;
+            color: #18181B;
+            /* iOS 点击效果与触控流畅度优化 */
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            padding-top: env(safe-area-inset-top);
+            padding-bottom: calc(env(safe-area-inset-bottom) + 6rem);
+        }
+        /* 支持 iOS 弹性平滑滚动 */
+        .overflow-y-auto {
+            -webkit-overflow-scrolling: touch;
+        }
+        .neon-highlight {
+            position: relative;
+            z-index: 1;
+            display: inline-block;
+        }
+        .neon-highlight::after {
+            content: '';
+            position: absolute;
+            bottom: 2px;
+            left: -4px;
+            width: calc(100% + 8px);
+            height: 35%;
+            background-color: #D8F828;
+            z-index: -1;
+            border-radius: 4px;
+            opacity: 0.85;
+        }
+        .pocket-card {
+            transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .pocket-card:hover {
+            transform: translateY(-4px);
+        }
+        .icon-bounce {
+            transition: transform 0.2s ease;
+        }
+        .pocket-card:hover .icon-bounce {
+            transform: scale(1.15) rotate(-6deg);
+        }
+        .modal-animate {
+            animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.95) translateY(10px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center pb-24" x-data="pocketApp()">
+
+    <!-- 顶部固定导航 Bar -->
+    <header class="w-full max-w-4xl px-4 sm:px-6 pt-5 pb-3 flex items-center justify-between z-20">
+        <div class="flex items-center space-x-2">
+            <div class="w-10 h-10 rounded-2xl bg-black text-neon flex items-center justify-center text-xl font-black shadow-md">
+                👛
+            </div>
+            <div>
+                <h1 class="text-xl font-black tracking-tight text-zinc-900 neon-highlight">口袋荷包</h1>
+                <p class="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">Smart Budgeting</p>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-3">
+            <button @click="openTransactionModal()" class="bg-black hover:bg-zinc-800 text-neon px-5 py-2.5 rounded-full font-bold text-xs shadow-capsule transition-all duration-200 flex items-center space-x-2 active:scale-95 group border border-zinc-800 cursor-pointer">
+                <svg class="w-4 h-4 stroke-current stroke-[2.5] transition-transform group-hover:rotate-90" fill="none" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
+                <span>记一笔</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- 主视图容器 -->
+    <main class="w-full max-w-4xl px-4 sm:px-6 space-y-7 mt-2">
+
+        <!-- 1. 顶部常驻卡片：当前总存款 (包含当月总收入，支持直接编辑与向荷包分配) -->
+        <section class="bg-white/90 backdrop-blur-md rounded-3xl p-6 sm:p-7 shadow-soft-lg border border-black/5 relative overflow-hidden sticky top-4 z-30">
+            <div class="absolute -right-8 -bottom-8 w-40 h-40 bg-neon/30 rounded-full blur-3xl pointer-events-none"></div>
+
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-5 border-b border-zinc-100">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-bold text-zinc-400 uppercase tracking-wider">当前总存款 (含当月收入累计)</span>
+                        <span class="text-[10px] bg-neon/80 text-black px-2.5 py-0.5 rounded-full font-extrabold">总储蓄资产</span>
+                    </div>
+                    <div class="text-3xl sm:text-4xl font-black text-zinc-900 mt-1 flex items-baseline gap-1">
+                        <span class="text-lg text-zinc-400 font-semibold">¥</span>
+                        <span x-text="formatNumber(computedTotalSavings)">0.00</span>
+                    </div>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button @click="openAllocateFromSavingsModal()" class="bg-neon hover:bg-neon-hover text-black px-4 py-2.5 rounded-2xl text-xs font-black transition shadow-sm flex items-center space-x-1.5 active:scale-95 cursor-pointer">
+                        <span>🎁 从存款分配给荷包</span>
+                    </button>
+                    <button @click="openEditSavingsModal()" class="bg-black hover:bg-zinc-800 text-neon px-3.5 py-2.5 rounded-2xl text-xs font-extrabold transition shadow-sm flex items-center space-x-1.5 active:scale-95 cursor-pointer">
+                        <svg class="w-3.5 h-3.5 stroke-current stroke-2" fill="none" viewBox="0 0 24 24"><path d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+                        <span>校准基准数</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 资金池状态概览 -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-4">
+                <div>
+                    <span class="text-[11px] font-bold text-zinc-400">当月总收入 (入账)</span>
+                    <div class="text-lg font-extrabold text-emerald-600 mt-0.5">
+                        +¥<span x-text="formatNumber(monthlyTotalIncome)">0.00</span>
+                    </div>
+                </div>
+
+                <div>
+                    <span class="text-[11px] font-bold text-zinc-400">本月预算已分配</span>
+                    <div class="text-lg font-extrabold text-zinc-800 mt-0.5">
+                        ¥<span x-text="formatNumber(totalBudgeted)">0.00</span>
+                    </div>
+                </div>
+
+                <div>
+                    <span class="text-[11px] font-bold text-zinc-400">本月累计支出</span>
+                    <div class="text-lg font-extrabold text-rose-500 mt-0.5">
+                        ¥<span x-text="formatNumber(totalExpense)">0.00</span>
+                    </div>
+                </div>
+
+                <div>
+                    <span class="text-[11px] font-bold text-zinc-400">多金库累计储蓄</span>
+                    <div class="text-lg font-extrabold text-zinc-900 mt-0.5">
+                        ¥<span x-text="formatNumber(allVaultsTotalBalance)">0.00</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. 改版：日期选择专区 (左侧大标题“日期选择”，右侧轻量下拉按钮) -->
+        <div class="flex items-center justify-between px-1">
+            <h2 class="text-lg font-black text-zinc-900">日期选择</h2>
+
+            <!-- 右侧日期选择下拉触发按钮 -->
+            <button @click="showMonthPickerModal = true" class="bg-white border border-zinc-200 hover:border-black text-zinc-800 px-4 py-2 rounded-2xl text-xs font-black shadow-sm transition flex items-center space-x-2 active:scale-95 cursor-pointer">
+                <span>📅</span>
+                <span x-text="formatMonthTitle(selectedMonth)" class="text-zinc-900">2026年10月</span>
+                <svg class="w-3.5 h-3.5 stroke-current stroke-2 text-zinc-400" fill="none" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"/></svg>
+            </button>
+        </div>
+
+        <!-- 3. 多源收入卡片专区 (主业工资 + 副业收入 多卡片管理) -->
+        <section class="bg-white/80 backdrop-blur-md rounded-3xl p-6 shadow-soft-lg border border-black/5 space-y-5" x-data="{ incomeTab: 'MAIN' }">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-zinc-100 pb-4">
+                <div>
+                    <h2 class="text-lg font-black text-zinc-900 neon-highlight">当月收入项目</h2>
+                    <p class="text-xs text-zinc-400 font-medium">所有收入将自动归集计入总存款，并可独立记账明细</p>
+                </div>
+
+                <!-- 动作按钮区：提供明确的新增主业与新增副业按钮 -->
+                <div class="flex items-center space-x-2">
+                    <button @click="openIncomeSourceModal('MAIN')" class="bg-black hover:bg-zinc-800 text-white px-3.5 py-2 rounded-2xl text-xs font-extrabold transition shadow-sm active:scale-95 cursor-pointer flex items-center space-x-1">
+                        <span>+ 新增主业</span>
+                    </button>
+                    <button @click="openIncomeSourceModal('SIDE')" class="bg-neon hover:bg-neon-hover text-black px-3.5 py-2 rounded-2xl text-xs font-extrabold transition shadow-sm active:scale-95 cursor-pointer flex items-center space-x-1">
+                        <span>+ 新增副业</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Tab 切换按钮组 (放置在卡片区域上方，靠左对齐) -->
+            <div class="flex items-center justify-between pt-1">
+                <div class="bg-cream-100 p-1.5 rounded-2xl flex items-center space-x-1">
+                    <button @click="incomeTab = 'MAIN'" 
+                            :class="incomeTab === 'MAIN' ? 'bg-black text-white shadow-sm' : 'text-zinc-600 hover:text-black'"
+                            class="px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-1.5">
+                        <span>💼</span>
+                        <span>主业工资</span>
+                        <span class="text-[10px] opacity-75" x-text="`(${currentMonthIncomeSources.filter(s => s.category === 'MAIN').length})`"></span>
+                    </button>
+                    <button @click="incomeTab = 'SIDE'" 
+                            :class="incomeTab === 'SIDE' ? 'bg-black text-white shadow-sm' : 'text-zinc-600 hover:text-black'"
+                            class="px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center space-x-1.5">
+                        <span>🚀</span>
+                        <span>副业收入</span>
+                        <span class="text-[10px] opacity-75" x-text="`(${currentMonthIncomeSources.filter(s => s.category === 'SIDE').length})`"></span>
+                    </button>
+                </div>
+
+                <span class="text-xs font-bold text-zinc-400" x-text="incomeTab === 'MAIN' ? '固定薪资与主营入账' : '兼职、投资与副业收益'"></span>
+            </div>
+
+            <!-- 收入卡片展台 Grid -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <template x-for="item in currentMonthIncomeSources.filter(s => s.category === incomeTab)" :key="item.id">
+                    <div @click="openIncomeDetailModal(item)"
+                         class="pocket-card cursor-pointer rounded-2xl p-4 bg-cream-50 border border-black/10 shadow-sm relative overflow-hidden flex flex-col justify-between hover:border-black transition">
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-xl" x-text="item.icon || (item.category === 'MAIN' ? '💼' : '🚀')"></span>
+                                    <span class="text-[10px] font-black px-2 py-0.5 rounded-full uppercase"
+                                          :class="item.category === 'MAIN' ? 'bg-black text-white' : 'bg-neon text-black'"
+                                          x-text="item.category === 'MAIN' ? '主业收入' : '副业项目'"></span>
+                                </div>
+                                <div class="flex items-center space-x-1" @click.stop>
+                                    <button @click.stop="openIncomeSourceModal(item.category, item)" class="p-1 rounded-full hover:bg-black/10 transition cursor-pointer" title="编辑项目">
+                                        <svg class="w-3.5 h-3.5 stroke-current stroke-2 text-zinc-600" fill="none" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    </button>
+                                    <button @click.stop="confirmDeleteIncomeSource(item.id, item.name, $event)" class="p-1 rounded-full hover:bg-rose-500/20 text-rose-600 transition cursor-pointer" title="删除项目">
+                                        <svg class="w-3.5 h-3.5 stroke-current stroke-2 pointer-events-none" fill="none" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <h3 class="font-extrabold text-zinc-900 text-sm" x-text="item.name"></h3>
+                        </div>
+
+                        <div class="mt-4 pt-2 border-t border-black/5 flex justify-between items-end">
+                            <div>
+                                <span class="text-[10px] text-zinc-400 font-bold">实际入账</span>
+                                <div class="text-lg font-black text-emerald-600 mt-0.5">
+                                    ¥<span x-text="formatNumber(getIncomeSourceTotal(item.id))">0.00</span>
+                                </div>
+                            </div>
+                            <span class="text-[10px] font-bold text-zinc-400">点击查看/记明细 ➔</span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- 无项目时的空状态提示 -->
+            <template x-if="currentMonthIncomeSources.filter(s => s.category === incomeTab).length === 0">
+                <div @click="openIncomeSourceModal(incomeTab)" class="border-2 border-dashed border-zinc-200 rounded-2xl p-6 text-center hover:border-black transition cursor-pointer bg-cream-50/50">
+                    <span class="text-2xl" x-text="incomeTab === 'MAIN' ? '💼' : '🚀'"></span>
+                    <h4 class="text-xs font-extrabold text-zinc-800 mt-1" x-text="incomeTab === 'MAIN' ? '暂未创建主业收入项目' : '暂未创建副业收入项目'"></h4>
+                    <p class="text-[11px] text-zinc-400 mt-0.5">点击在此分类下添加卡片</p>
+                </div>
+            </template>
+        </section>
+
+        <!-- 4. 多小金库专区 (左右滑动切换) -->
+        <section class="bg-white/80 backdrop-blur-md rounded-3xl p-6 shadow-soft-lg border border-black/5 space-y-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <h2 class="text-lg font-black text-zinc-900 neon-highlight">🏴‍☠️ 额外小金库专区</h2>
+                    <span class="text-xs text-zinc-400 font-bold" x-text="`(${vaults.length > 0 ? (currentVaultIndex + 1) : 0}/${vaults.length})`"></span>
+                </div>
+
+                <div class="flex items-center space-x-2">
+                    <button @click="openVaultModal()" class="text-xs font-extrabold bg-black text-white hover:bg-zinc-800 px-3 py-1.5 rounded-xl transition cursor-pointer">
+                        + 新建小金库
+                    </button>
+                    <!-- 左右切换控制按钮 -->
+                    <div class="flex items-center space-x-1" x-show="vaults.length > 1">
+                        <button @click="prevVault()" class="p-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 transition cursor-pointer">
+                            <svg class="w-4 h-4 stroke-current stroke-2" fill="none" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg>
+                        </button>
+                        <button @click="nextVault()" class="p-1.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 transition cursor-pointer">
+                            <svg class="w-4 h-4 stroke-current stroke-2" fill="none" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 小金库卡片 -->
+            <template x-if="currentVault">
+                <div @click="openVaultDetailModal(currentVault)" 
+                     class="pocket-card cursor-pointer rounded-3xl p-5 bg-zinc-900 text-white shadow-lift relative overflow-hidden flex flex-col justify-between border border-zinc-800 transition-all">
+                    <div class="absolute -right-6 -bottom-6 w-32 h-32 bg-neon/20 rounded-full blur-2xl pointer-events-none"></div>
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="w-11 h-11 rounded-2xl bg-zinc-800 flex items-center justify-center text-2xl shadow-inner border border-zinc-700" x-text="currentVault.icon || '🏴‍☠️'">
+                            </div>
+                            <div class="flex items-center space-x-1" @click.stop>
+                                <span class="text-[10px] bg-neon text-black px-2.5 py-0.5 rounded-full font-extrabold mr-1">独立小金库</span>
+                                <button @click.stop="openVaultModal(currentVault)" class="p-1.5 rounded-full hover:bg-zinc-700 text-zinc-300 transition cursor-pointer" title="编辑小金库">
+                                    <svg class="w-4 h-4 stroke-current stroke-2" fill="none" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button @click.stop.prevent="confirmDeleteVault(currentVault, $event)" class="p-1.5 rounded-full hover:bg-rose-500/30 text-rose-400 transition cursor-pointer" title="删除小金库">
+                                    <svg class="w-4 h-4 stroke-current stroke-2 pointer-events-none" fill="none" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                        </div>
+                        <h3 class="font-extrabold text-white text-lg" x-text="currentVault.name"></h3>
+                        <p class="text-xs text-zinc-400 mt-0.5">目标储蓄: ¥<span x-text="formatNumber(currentVault.target || 0)"></span></p>
+                    </div>
+
+                    <div class="mt-6 pt-3 border-t border-zinc-800 flex justify-between items-end">
+                        <div>
+                            <span class="text-xs text-zinc-400">金库结余</span>
+                            <div class="text-2xl font-black text-neon mt-0.5">
+                                ¥<span x-text="formatNumber(getVaultBalance(currentVault.id))">0.00</span>
+                            </div>
+                        </div>
+                        <span class="text-xs font-bold text-zinc-400" x-text="`完成率 ${getVaultProgress(currentVault)}%`"></span>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="vaults.length === 0">
+                <div @click="openVaultModal()" class="border-2 border-dashed border-zinc-200 rounded-3xl p-6 text-center hover:border-black transition cursor-pointer bg-cream-100/50">
+                    <span class="text-2xl">🏴‍☠️</span>
+                    <h4 class="text-xs font-extrabold text-zinc-800 mt-1">还没有小金库</h4>
+                    <p class="text-[11px] text-zinc-400 mt-0.5">点击创建一个独立机动存储资金库</p>
+                </div>
+            </template>
+        </section>
+
+        <!-- 5. 荷包管理 Header -->
+        <div class="flex items-center justify-between pt-2">
+            <div>
+                <h2 class="text-lg font-black text-zinc-900 neon-highlight">当月小荷包分配</h2>
+                <p class="text-xs text-zinc-400 font-medium">针对 <span x-text="selectedMonth"></span> 专款专用计划</p>
+            </div>
+            
+            <button @click="openPocketModal()" class="bg-black hover:bg-zinc-800 text-white px-4 py-2 rounded-2xl text-xs font-extrabold transition shadow-sm flex items-center space-x-1.5 active:scale-95 cursor-pointer">
+                <svg class="w-3.5 h-3.5 stroke-current stroke-2" fill="none" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                <span>创建新荷包</span>
+            </button>
+        </div>
+
+        <!-- 荷包列表展示 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <template x-for="pocket in pockets" :key="pocket.id">
+                <div @click="openPocketDetailModal(pocket)"
+                     :style="`background-color: ${pocket.color || '#FFF1E6'}`"
+                     class="pocket-card cursor-pointer rounded-3xl p-5 border border-black/10 shadow-soft relative overflow-hidden flex flex-col justify-between">
+                    
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="w-11 h-11 rounded-2xl bg-white/80 backdrop-blur-sm flex items-center justify-center text-2xl shadow-sm border border-black/5 icon-bounce" x-text="pocket.icon || '👛'">
+                            </div>
+                            <div class="flex items-center space-x-1" @click.stop>
+                                <button @click.stop="openPocketModal(pocket)" class="p-1.5 rounded-full hover:bg-black/10 transition cursor-pointer" title="编辑荷包">
+                                    <svg class="w-3.5 h-3.5 stroke-current stroke-2 text-zinc-700" fill="none" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button @click.stop.prevent="confirmDeletePocket(pocket, $event)" class="p-1.5 rounded-full hover:bg-rose-500/20 text-rose-600 transition cursor-pointer" title="删除荷包">
+                                    <svg class="w-3.5 h-3.5 stroke-current stroke-2 pointer-events-none" fill="none" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <h3 class="font-extrabold text-zinc-900 text-base" x-text="pocket.name"></h3>
+                        <p class="text-xs text-zinc-500 mt-0.5 line-clamp-1" x-text="pocket.desc || '暂无描述'"></p>
+                    </div>
+
+                    <div class="mt-5 pt-3 border-t border-black/5 space-y-2">
+                        <div class="flex justify-between items-end text-xs">
+                            <span class="font-bold text-zinc-500">已用 / 额度</span>
+                            <span class="font-extrabold text-zinc-900">
+                                ¥<span x-text="formatNumber(getPocketSpent(pocket.id))"></span> / ¥<span x-text="formatNumber(getPocketBudget(pocket))"></span>
+                                <span class="text-[11px] text-zinc-500 font-bold ml-1" x-text="`(${getPocketProgress(pocket)}%)`"></span>
+                            </span>
+                        </div>
+
+                        <div class="w-full h-2.5 bg-black/10 rounded-full overflow-hidden p-0.5">
+                            <div class="h-full bg-black rounded-full transition-all duration-300"
+                                 :style="`width: ${Math.min(100, getPocketProgress(pocket))}%`"></div>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <template x-if="pockets.length === 0">
+            <div @click="openPocketModal()" class="border-2 border-dashed border-zinc-200 rounded-3xl p-8 text-center hover:border-black transition cursor-pointer bg-white">
+                <span class="text-3xl">👛</span>
+                <h4 class="text-sm font-extrabold text-zinc-800 mt-2">暂无小荷包</h4>
+                <p class="text-xs text-zinc-400 mt-1">点击创建一个专属分类预算口袋</p>
+            </div>
+        </template>
+
+        <!-- 账单明细列表 -->
+        <section class="bg-white rounded-3xl p-6 shadow-soft border border-black/5 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-base font-black text-zinc-900">全局账单明细</h2>
+                <div class="flex space-x-2">
+                    <select x-model="filterPocket" class="bg-cream-100 border-none rounded-xl px-3 py-1.5 text-xs font-bold text-zinc-700">
+                        <option value="ALL">全部关联分类</option>
+                        <optgroup label="小荷包">
+                            <template x-for="p in pockets" :key="p.id">
+                                <option :value="p.id" x-text="p.name"></option>
+                            </template>
+                        </optgroup>
+                        <optgroup label="收入项目">
+                            <template x-for="inc in incomeSources" :key="inc.id">
+                                <option :value="inc.id" x-text="inc.name"></option>
+                            </template>
+                        </optgroup>
+                        <optgroup label="小金库">
+                            <template x-for="v in vaults" :key="v.id">
+                                <option :value="v.id" x-text="v.name"></option>
+                            </template>
+                        </optgroup>
+                    </select>
+                </div>
+            </div>
+
+            <div class="divide-y divide-zinc-100">
+                <template x-for="tx in filteredTransactions" :key="tx.id">
+                    <div class="py-3 flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-9 h-9 rounded-2xl bg-cream-100 flex items-center justify-center text-lg font-bold" x-text="getPocketIcon(tx.pocketId)"></div>
+                            <div>
+                                <div class="font-extrabold text-xs text-zinc-900 flex items-center space-x-2">
+                                    <span x-text="tx.remark || '无备注'"></span>
+                                    <span class="text-[9px] bg-zinc-100 text-zinc-500 font-bold px-1.5 py-0.5 rounded-md" x-text="getPocketName(tx.pocketId)"></span>
+                                </div>
+                                <div class="text-[10px] text-zinc-400 mt-0.5" x-text="tx.date"></div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center space-x-3">
+                            <span class="font-black text-sm" :class="tx.type === 'EXPENSE' ? 'text-zinc-900' : 'text-emerald-600'" x-text="`${tx.type === 'EXPENSE' ? '-' : '+'}¥${formatNumber(tx.amount)}`"></span>
+                            <button @click.stop.prevent="deleteTransaction(tx.id, $event)" class="text-zinc-300 hover:text-rose-500 transition text-xs p-1 cursor-pointer font-bold" title="删除流水">✕</button>
+                        </div>
+                    </div>
+                </template>
+
+                <template x-if="filteredTransactions.length === 0">
+                    <div class="py-10 text-center text-xs text-zinc-400 font-bold">
+                        本月暂无交易记录 ~
+                    </div>
+                </template>
+            </div>
+        </section>
+    </main>
+
+    <!-- ==================== 1. 记账 Modal ==================== -->
+    <div x-show="showTransactionModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showTransactionModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-4">✍️ 记一笔账单</h2>
+            <form @submit.prevent="saveTransaction()" class="space-y-4">
+                <div class="grid grid-cols-2 gap-2 bg-cream-100 p-1 rounded-2xl">
+                    <button type="button" @click="transactionForm.type = 'EXPENSE'" :class="transactionForm.type === 'EXPENSE' ? 'bg-black text-white' : 'text-zinc-600'" class="py-2 text-xs font-extrabold rounded-xl transition cursor-pointer">支出</button>
+                    <button type="button" @click="transactionForm.type = 'INCOME'" :class="transactionForm.type === 'INCOME' ? 'bg-black text-white' : 'text-zinc-600'" class="py-2 text-xs font-extrabold rounded-xl transition cursor-pointer">收入</button>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">金额 (¥)</label>
+                    <input type="number" step="0.01" min="0.01" x-model.number="transactionForm.amount" required placeholder="0.00" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-3 text-xl font-black focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">归属荷包 / 收入卡片 / 金库</label>
+                    <select x-model="transactionForm.pocketId" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        <option value="">通用存款池</option>
+                        <optgroup label="自定义小荷包">
+                            <template x-for="p in pockets" :key="p.id">
+                                <option :value="p.id" x-text="`${p.icon} ${p.name}`"></option>
+                            </template>
+                        </optgroup>
+                        <optgroup label="主业/副业收入项目">
+                            <template x-for="inc in currentMonthIncomeSources" :key="inc.id">
+                                <option :value="inc.id" x-text="`${inc.icon} ${inc.name}`"></option>
+                            </template>
+                        </optgroup>
+                        <optgroup label="额外小金库">
+                            <template x-for="v in vaults" :key="v.id">
+                                <option :value="v.id" x-text="`${v.icon} ${v.name}`"></option>
+                            </template>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">日期</label>
+                        <input type="date" x-model="transactionForm.date" required class="w-full bg-cream-100 border border-black/10 rounded-2xl px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">备注说明</label>
+                        <input type="text" x-model="transactionForm.remark" placeholder="如：午餐、稿费" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                </div>
+
+                <div class="pt-3 flex justify-end space-x-2">
+                    <button type="button" @click="showTransactionModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">完成记账</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 2. 创建/编辑收入卡片 Modal (主业/副业) ==================== -->
+    <div x-show="showIncomeSourceModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showIncomeSourceModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-4" x-text="incomeSourceForm.id ? '编辑收入项目' : (incomeSourceForm.category === 'MAIN' ? '新增主业工资卡片' : '新增副业项目卡片')"></h2>
+            <form @submit.prevent="saveIncomeSource()" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">收入项目名称</label>
+                    <input type="text" x-model="incomeSourceForm.name" required placeholder="如：公司工资、设计接单、稿费" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">收入金额 (¥)</label>
+                    <input type="number" step="0.01" min="0" x-model.number="incomeSourceForm.amount" placeholder="0.00" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">收入类型</label>
+                        <select x-model="incomeSourceForm.category" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-3 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                            <option value="MAIN">💼 主业收入</option>
+                            <option value="SIDE">🚀 副业收入</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">图标 Emoji</label>
+                        <input type="text" x-model="incomeSourceForm.icon" maxlength="2" placeholder="💼" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                </div>
+
+                <div class="pt-3 flex justify-end space-x-2">
+                    <button type="button" @click="showIncomeSourceModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">保存项目</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 3. 从总存款划拨分配给荷包 Modal ==================== -->
+    <div x-show="showAllocateModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showAllocateModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-2">🎁 从存款分配额度至荷包</h2>
+            <p class="text-xs text-zinc-400 mb-4 font-medium">将总存款池中的资金划拨指定给小荷包或金库作为专属预算</p>
+            
+            <form @submit.prevent="saveAllocation()" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">划拨金额 (¥)</label>
+                    <input type="number" step="0.01" min="0.01" x-model.number="allocateForm.amount" required placeholder="500.00" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-3 text-lg font-black focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">划拨目标 (小荷包 / 金库)</label>
+                    <select x-model="allocateForm.pocketId" required class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        <option value="">请选择接收荷包</option>
+                        <optgroup label="小荷包">
+                            <template x-for="p in pockets" :key="p.id">
+                                <option :value="p.id" x-text="`${p.icon} ${p.name} (当前预算: ¥${getPocketBudget(p)})`"></option>
+                            </template>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <div class="pt-3 flex justify-end space-x-2">
+                    <button type="button" @click="showAllocateModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">确认分配</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 4. 创建/编辑荷包 Modal ==================== -->
+    <div x-show="showPocketModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showPocketModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-4" x-text="pocketForm.id ? '编辑小荷包' : '新建小荷包'"></h2>
+            <form @submit.prevent="savePocket()" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">荷包名称</label>
+                    <input type="text" x-model="pocketForm.name" required placeholder="如：餐饮美食、宠物养育" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">本月分配预算 (¥)</label>
+                        <input type="number" step="0.01" min="0" x-model.number="pocketForm.budget" required placeholder="1500" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">图标 Emoji</label>
+                        <input type="text" x-model="pocketForm.icon" maxlength="2" placeholder="👛" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">描述与备注</label>
+                    <input type="text" x-model="pocketForm.desc" placeholder="专款专用计划" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+
+                <div class="pt-3 flex justify-end space-x-2">
+                    <button type="button" @click="showPocketModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">保存荷包</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 5. 通用明细 Modal ==================== -->
+    <div x-show="showPocketDetailModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showPocketDetailModal = false" class="bg-white w-full max-w-lg rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5 max-h-[85vh] flex flex-col">
+            
+            <template x-if="currentDetailPocket">
+                <div class="space-y-4 flex-1 overflow-y-auto pr-1">
+                    <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+                        <div class="flex items-center space-x-3">
+                            <div class="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-sm border border-black/10" :style="`background-color: ${currentDetailPocket.color || '#FFF1E6'}`" x-text="currentDetailPocket.icon || '👛'"></div>
+                            <div>
+                                <h3 class="font-black text-lg text-zinc-900" x-text="currentDetailPocket.name"></h3>
+                                <p class="text-xs text-zinc-400 font-medium" x-text="currentDetailPocket.desc || '独立流水与账单记录'"></p>
+                            </div>
+                        </div>
+                        <button @click="showPocketDetailModal = false" class="text-zinc-400 hover:text-black font-bold p-1 cursor-pointer">✕</button>
+                    </div>
+
+                    <!-- 统计数据 -->
+                    <div class="grid grid-cols-2 gap-3 bg-cream-100 p-4 rounded-2xl">
+                        <div>
+                            <span class="text-[10px] text-zinc-400 font-bold uppercase">累计收入 (入账)</span>
+                            <div class="text-lg font-black text-emerald-600 mt-0.5">
+                                +¥<span x-text="formatNumber(currentPocketStats.totalIncome)"></span>
+                            </div>
+                        </div>
+                        <div>
+                            <span class="text-[10px] text-zinc-400 font-bold uppercase">累计支出</span>
+                            <div class="text-lg font-black text-rose-500 mt-0.5">
+                                -¥<span x-text="formatNumber(currentPocketStats.totalExpense)"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between pt-2">
+                        <h4 class="text-xs font-black text-zinc-800">专属明细记录</h4>
+                        <button @click="openAddTransactionForCurrentPocket()" class="text-xs font-extrabold bg-black text-neon hover:bg-zinc-800 px-3 py-1.5 rounded-xl transition cursor-pointer">
+                            + 记在此分类
+                        </button>
+                    </div>
+
+                    <!-- 明细列表 -->
+                    <div class="divide-y divide-zinc-100">
+                        <template x-for="tx in currentPocketTransactions" :key="tx.id">
+                            <div class="py-3 flex items-center justify-between">
+                                <div>
+                                    <div class="font-extrabold text-xs text-zinc-900" x-text="tx.remark || '流水记账'"></div>
+                                    <div class="text-[10px] text-zinc-400 mt-0.5" x-text="tx.date"></div>
+                                </div>
+                                <div class="flex items-center space-x-3">
+                                    <span class="font-black text-xs" :class="tx.type === 'EXPENSE' ? 'text-zinc-900' : 'text-emerald-600'" x-text="`${tx.type === 'EXPENSE' ? '-' : '+'}¥${formatNumber(tx.amount)}`"></span>
+                                    <button @click.stop.prevent="deleteTransaction(tx.id, $event)" class="text-zinc-300 hover:text-rose-500 text-xs p-1 cursor-pointer font-bold">✕</button>
+                                </div>
+                            </div>
+                        </template>
+
+                        <template x-if="currentPocketTransactions.length === 0">
+                            <div class="py-8 text-center text-xs text-zinc-400 font-bold">
+                                尚无使用明细记录 ~
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- ==================== 6. 修改基础总存款 Modal ==================== -->
+    <div x-show="showEditSavingsModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showEditSavingsModal = false" class="bg-white w-full max-w-sm rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-2">💰 校准基准总存款</h2>
+            <p class="text-xs text-zinc-400 mb-4 font-medium">基准存款数 + 当月总收入累计 = 当前总存款</p>
+
+            <form @submit.prevent="saveTotalSavings()" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">基准总储蓄金额 (¥)</label>
+                    <input type="number" step="0.01" min="0" x-model.number="tempTotalSavings" required class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-3 text-lg font-black focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+                <div class="pt-2 flex justify-end space-x-2">
+                    <button type="button" @click="showEditSavingsModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">保存金额</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 7. 新建/编辑小金库 Modal ==================== -->
+    <div x-show="showVaultModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showVaultModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <h2 class="text-lg font-black text-zinc-900 mb-4" x-text="vaultForm.id ? '编辑小金库' : '新建小金库'"></h2>
+            <form @submit.prevent="saveVault()" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-zinc-600 mb-1">小金库名称</label>
+                    <input type="text" x-model="vaultForm.name" required placeholder="如：旅行储备金、应急小金库" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">储蓄目标金额 (¥)</label>
+                        <input type="number" step="0.01" min="0" x-model.number="vaultForm.target" required placeholder="5000" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-zinc-600 mb-1">图标 Emoji</label>
+                        <input type="text" x-model="vaultForm.icon" maxlength="2" placeholder="🏴‍☠️" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-black">
+                    </div>
+                </div>
+                <div class="pt-3 flex justify-end space-x-2">
+                    <button type="button" @click="showVaultModal = false" class="px-5 py-2.5 rounded-full font-bold text-xs text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                    <button type="submit" class="bg-black text-neon hover:bg-zinc-800 px-6 py-2.5 rounded-full font-bold text-xs shadow-md transition cursor-pointer">保存小金库</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ==================== 8. 年份与月份筛选 Modal (支持点标记) ==================== -->
+    <div x-show="showMonthPickerModal" 
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+         style="display: none;">
+        <div @click.outside="showMonthPickerModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-100">
+                <h2 class="text-lg font-black text-zinc-900">📅 选择账单年份与月份</h2>
+                <button @click="showMonthPickerModal = false" class="text-zinc-400 hover:text-black font-bold text-sm">✕</button>
+            </div>
+
+            <!-- 年份切换器 -->
+            <div class="flex items-center justify-between my-4 bg-cream-100 p-2 rounded-2xl">
+                <button @click="pickerYear--" class="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-xs font-black hover:bg-black hover:text-white transition cursor-pointer">‹</button>
+                <span class="text-base font-black text-zinc-900" x-text="`${pickerYear} 年`"></span>
+                <button @click="pickerYear++" class="w-8 h-8 rounded-xl bg-white shadow-sm flex items-center justify-center text-xs font-black hover:bg-black hover:text-white transition cursor-pointer">›</button>
+            </div>
+
+            <!-- 12个月份 Grid -->
+            <div class="grid grid-cols-3 gap-2.5 my-2">
+                <template x-for="m in 12" :key="m">
+                    <button @click="selectYearMonth(pickerYear, m)"
+                            :class="isMonthSelected(pickerYear, m) ? 'bg-black text-neon shadow-md' : 'bg-cream-50 text-zinc-800 hover:bg-zinc-200'"
+                            class="py-3 rounded-2xl text-xs font-black transition relative cursor-pointer flex flex-col items-center justify-center">
+                        <span x-text="`${m} 月`"></span>
+                        
+                        <!-- 有记录的月份红/绿标记圆点 -->
+                        <template x-if="hasRecordInMonth(pickerYear, m)">
+                            <span class="absolute top-1.5 right-2 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white" title="该月份有账单或收入记录"></span>
+                        </template>
+                    </button>
+                </template>
+            </div>
+
+            <div class="pt-2 flex items-center justify-between text-[11px] text-zinc-400 font-bold">
+                <span class="flex items-center space-x-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                    <span>带绿点的月份代表存在记账/收入记录</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== Alpine.js 核心代码数据逻辑层 ==================== -->
+    <script>
+        function pocketApp() {
+            return {
+                morandiColors: ['#FFF1E6', '#FAD2E1', '#D8E2DC', '#D6E2E9', '#E2ECE9', '#FFE5D9'],
+
+                // 核心数据
+                selectedMonth: new Date().toISOString().slice(0, 7),
+                pickerYear: new Date().getFullYear(),
+                showMonthPickerModal: false,
+
+                baseSavings: 50000, // 基础总存款
+                tempTotalSavings: 50000,
+                
+                incomeSources: [
+                    { id: 'inc_main_1', category: 'MAIN', name: '主业工资', icon: '💼', month: new Date().toISOString().slice(0, 7) }
+                ],
+
+                pockets: [
+                    { id: 'p_1', name: '餐饮美食', budget: 2000, icon: '🍔', desc: '日常三餐与餐饮支出', color: '#FFF1E6' }
+                ],
+                vaults: [
+                    { id: 'vault_1', name: '机动小金库', icon: '🏴‍☠️', target: 10000 }
+                ],
+                currentVaultIndex: 0,
+                transactions: [],
+                monthlyBudgets: {},
+
+                // Modals 控制
+                showPocketModal: false,
+                showTransactionModal: false,
+                showPocketDetailModal: false,
+                showEditSavingsModal: false,
+                showVaultModal: false,
+                showIncomeSourceModal: false,
+                showAllocateModal: false,
+
+                currentDetailPocket: null,
+                detailFilterType: 'ALL',
+
+                filterPocket: 'ALL',
+                filterType: 'ALL',
+
+                incomeSourceForm: { id: null, category: 'MAIN', name: '', amount: '', icon: '💼' },
+                allocateForm: { pocketId: '', amount: '' },
+                pocketForm: { id: null, name: '', budget: '', icon: '👛', desc: '', color: '#FFF1E6', type: 'BUDGET' },
+                vaultForm: { id: null, name: '', icon: '🏴‍☠️', target: '' },
+                transactionForm: { id: null, type: 'EXPENSE', amount: '', pocketId: '', date: new Date().toISOString().split('T')[0], remark: '' },
+
+                init() {
+                    const savedPockets = localStorage.getItem('pocket_v5_pockets');
+                    const savedTxs = localStorage.getItem('pocket_v5_txs');
+                    const savedBaseSavings = localStorage.getItem('pocket_v5_base_savings');
+                    const savedIncomes = localStorage.getItem('pocket_v5_incomes');
+                    const savedBudgets = localStorage.getItem('pocket_v5_monthly_budgets');
+                    const savedVaults = localStorage.getItem('pocket_v5_vaults_list');
+
+                    if (savedPockets) { try { this.pockets = JSON.parse(savedPockets); } catch(e){} }
+                    if (savedTxs) { try { this.transactions = JSON.parse(savedTxs); } catch(e){} }
+                    if (savedBaseSavings) { this.baseSavings = Number(savedBaseSavings) || 0; }
+                    if (savedIncomes) { try { this.incomeSources = JSON.parse(savedIncomes); } catch(e){} }
+                    if (savedBudgets) { try { this.monthlyBudgets = JSON.parse(savedBudgets); } catch(e){} }
+                    if (savedVaults) { try { this.vaults = JSON.parse(savedVaults); } catch(e){} }
+                },
+
+                saveStorage() {
+                    localStorage.setItem('pocket_v5_pockets', JSON.stringify(this.pockets));
+                    localStorage.setItem('pocket_v5_txs', JSON.stringify(this.transactions));
+                    localStorage.setItem('pocket_v5_base_savings', this.baseSavings.toString());
+                    localStorage.setItem('pocket_v5_incomes', JSON.stringify(this.incomeSources));
+                    localStorage.setItem('pocket_v5_monthly_budgets', JSON.stringify(this.monthlyBudgets));
+                    localStorage.setItem('pocket_v5_vaults_list', JSON.stringify(this.vaults));
+                },
+
+                formatMonthTitle(ym) {
+                    if (!ym) return '';
+                    const parts = ym.split('-');
+                    return `${parts[0]}年 ${Number(parts[1])}月`;
+                },
+
+                selectYearMonth(year, month) {
+                    const monthStr = month < 10 ? `0${month}` : `${month}`;
+                    this.selectedMonth = `${year}-${monthStr}`;
+                    this.showMonthPickerModal = false;
+                },
+
+                isMonthSelected(year, month) {
+                    const monthStr = month < 10 ? `0${month}` : `${month}`;
+                    return this.selectedMonth === `${year}-${monthStr}`;
+                },
+
+                // 检查该月份是否有任何流水交易记录或收入项目记录
+                hasRecordInMonth(year, month) {
+                    const monthStr = month < 10 ? `0${month}` : `${month}`;
+                    const targetYM = `${year}-${monthStr}`;
+                    const hasTx = this.transactions.some(t => t.date && t.date.startsWith(targetYM));
+                    const hasInc = this.incomeSources.some(inc => inc.month === targetYM);
+                    return hasTx || hasInc;
+                },
+
+                // 当月关联收入卡片列表
+                get currentMonthIncomeSources() {
+                    return this.incomeSources.filter(s => !s.month || s.month === this.selectedMonth);
+                },
+
+                // 统计特定收入卡片的累计金额
+                getIncomeSourceTotal(sourceId) {
+                    const txs = this.transactions.filter(t => t.pocketId === sourceId && t.date && t.date.startsWith(this.selectedMonth));
+                    const inc = txs.filter(t => t.type === 'INCOME').reduce((s, t) => s + Number(t.amount || 0), 0);
+                    const exp = txs.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + Number(t.amount || 0), 0);
+                    return inc - exp;
+                },
+
+                // 计算当月所有收入源的总额 (自动计入总存款)
+                get monthlyTotalIncome() {
+                    return this.currentMonthIncomeSources.reduce((sum, item) => sum + this.getIncomeSourceTotal(item.id), 0);
+                },
+
+                // 实时计算的总存款 (基础存款 + 收入累计 - 全局支出)
+                get computedTotalSavings() {
+                    const allIncomeTxs = this.transactions.filter(t => t.type === 'INCOME').reduce((s, t) => s + Number(t.amount || 0), 0);
+                    const allExpenseTxs = this.transactions.filter(t => t.type === 'EXPENSE').reduce((s, t) => s + Number(t.amount || 0), 0);
+                    return Number(this.baseSavings) + allIncomeTxs - allExpenseTxs;
+                },
+
+                // 管理收入项目 Modal
+                openIncomeSourceModal(category = 'MAIN', item = null) {
+                    if (item) {
+                        this.incomeSourceForm = { 
+                            ...item,
+                            amount: this.getIncomeSourceTotal(item.id) || ''
+                        };
+                    } else {
+                        this.incomeSourceForm = {
+                            id: null,
+                            category: category,
+                            name: category === 'MAIN' ? '主业薪资' : '副业收益',
+                            amount: '',
+                            icon: category === 'MAIN' ? '💼' : '🚀',
+                            month: this.selectedMonth
+                        };
+                    }
+                    this.showIncomeSourceModal = true;
+                },
+
+                saveIncomeSource() {
+                    if (!this.incomeSourceForm.name) return;
+                    let targetId = this.incomeSourceForm.id;
+
+                    if (targetId) {
+                        const idx = this.incomeSources.findIndex(s => s.id === targetId);
+                        if (idx !== -1) this.incomeSources[idx] = { ...this.incomeSourceForm };
+                    } else {
+                        targetId = 'inc_' + Date.now();
+                        this.incomeSources.push({
+                            ...this.incomeSourceForm,
+                            id: targetId,
+                            month: this.selectedMonth
+                        });
+                    }
+
+                    // 如果填入了金额，自动记一笔该项目的收入
+                    if (this.incomeSourceForm.amount && Number(this.incomeSourceForm.amount) > 0) {
+                        const enteredAmount = Number(this.incomeSourceForm.amount);
+                        
+                        this.transactions = this.transactions.filter(t => !(t.pocketId === targetId && t.remark === '项目初始设定入账' && t.date.startsWith(this.selectedMonth)));
+                        
+                        this.transactions.push({
+                            id: 'tx_' + Date.now(),
+                            type: 'INCOME',
+                            amount: enteredAmount,
+                            pocketId: targetId,
+                            date: new Date().toISOString().split('T')[0],
+                            remark: '项目初始设定入账'
+                        });
+                    }
+
+                    this.saveStorage();
+                    this.showIncomeSourceModal = false;
+                },
+
+                confirmDeleteIncomeSource(id, name, event) {
+                    if (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    if (confirm(`确认要删除收入项目「${name || '该项目'}」吗？`)) {
+                        this.incomeSources = this.incomeSources.filter(s => s.id !== id);
+                        this.transactions = this.transactions.filter(t => t.pocketId !== id);
+                        this.saveStorage();
+                        if (this.currentDetailPocket?.id === id) {
+                            this.showPocketDetailModal = false;
+                        }
+                    }
+                },
+
+                openIncomeDetailModal(item) {
+                    this.currentDetailPocket = {
+                        id: item.id,
+                        name: item.name,
+                        icon: item.icon || '💼',
+                        desc: item.category === 'MAIN' ? '主业收入明细' : '副业收入明细',
+                        color: '#E2ECE9'
+                    };
+                    this.detailFilterType = 'ALL';
+                    this.showPocketDetailModal = true;
+                },
+
+                // 从存款分配给荷包
+                openAllocateFromSavingsModal() {
+                    this.allocateForm = { pocketId: '', amount: '' };
+                    this.showAllocateModal = true;
+                },
+
+                saveAllocation() {
+                    if (!this.allocateForm.pocketId || !this.allocateForm.amount) return;
+                    const amount = Number(this.allocateForm.amount);
+                    const pocket = this.pockets.find(p => p.id === this.allocateForm.pocketId);
+                    
+                    if (pocket) {
+                        const currentB = this.getPocketBudget(pocket);
+                        if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
+                        this.monthlyBudgets[this.selectedMonth][pocket.id] = currentB + amount;
+                        this.saveStorage();
+                    }
+                    this.showAllocateModal = false;
+                },
+
+                // 小金库轮播与方法
+                get currentVault() {
+                    if (this.vaults.length === 0) return null;
+                    if (this.currentVaultIndex >= this.vaults.length) this.currentVaultIndex = 0;
+                    return this.vaults[this.currentVaultIndex];
+                },
+
+                prevVault() {
+                    if (this.vaults.length === 0) return;
+                    this.currentVaultIndex = (this.currentVaultIndex - 1 + this.vaults.length) % this.vaults.length;
+                },
+
+                nextVault() {
+                    if (this.vaults.length === 0) return;
+                    this.currentVaultIndex = (this.currentVaultIndex + 1) % this.vaults.length;
+                },
+
+                getVaultBalance(vaultId) {
+                    const vaultTxs = this.transactions.filter(t => t.pocketId === vaultId);
+                    const vaultIncome = vaultTxs.filter(t => t.type === 'INCOME').reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                    const vaultExpense = vaultTxs.filter(t => t.type === 'EXPENSE').reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                    return vaultIncome - vaultExpense;
+                },
+
+                getVaultProgress(vault) {
+                    if (!vault || !vault.target) return 0;
+                    const bal = this.getVaultBalance(vault.id);
+                    return Math.min(100, Math.round((bal / vault.target) * 100));
+                },
+
+                get allVaultsTotalBalance() {
+                    return this.vaults.reduce((sum, v) => sum + this.getVaultBalance(v.id), 0);
+                },
+
+                get totalExpense() {
+                    return this.transactions
+                        .filter(t => t.type === 'EXPENSE' && t.date && t.date.startsWith(this.selectedMonth))
+                        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                },
+
+                getPocketBudget(pocket) {
+                    if (!pocket) return 0;
+                    if (this.monthlyBudgets[this.selectedMonth] && this.monthlyBudgets[this.selectedMonth][pocket.id] !== undefined) {
+                        return this.monthlyBudgets[this.selectedMonth][pocket.id];
+                    }
+                    return Number(pocket.budget || 0);
+                },
+
+                get totalBudgeted() {
+                    return this.pockets.reduce((sum, p) => sum + this.getPocketBudget(p), 0);
+                },
+
+                getPocketSpent(pocketId) {
+                    return this.transactions
+                        .filter(t => t.pocketId === pocketId && t.type === 'EXPENSE' && t.date && t.date.startsWith(this.selectedMonth))
+                        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                },
+
+                getPocketProgress(pocket) {
+                    const budget = this.getPocketBudget(pocket);
+                    if (!pocket || budget <= 0) return 0;
+                    const spent = this.getPocketSpent(pocket.id);
+                    return Math.round((spent / budget) * 100);
+                },
+
+                getPocketName(pocketId) {
+                    const inc = this.incomeSources.find(x => x.id === pocketId);
+                    if (inc) return inc.name;
+                    const v = this.vaults.find(x => x.id === pocketId);
+                    if (v) return v.name;
+                    if (!pocketId) return '通用存款池';
+                    const p = this.pockets.find(x => x.id === pocketId);
+                    return p ? p.name : '通用';
+                },
+
+                getPocketIcon(pocketId) {
+                    const inc = this.incomeSources.find(x => x.id === pocketId);
+                    if (inc) return inc.icon || '💼';
+                    const v = this.vaults.find(x => x.id === pocketId);
+                    if (v) return v.icon || '🏴‍☠️';
+                    if (!pocketId) return '🪙';
+                    const p = this.pockets.find(x => x.id === pocketId);
+                    return p ? (p.icon || '👛') : '👛';
+                },
+
+                get filteredTransactions() {
+                    return this.transactions.filter(t => {
+                        const matchMonth = t.date && t.date.startsWith(this.selectedMonth);
+                        const matchPocket = this.filterPocket === 'ALL' || 
+                                           (this.filterPocket === 'NONE' ? !t.pocketId : t.pocketId === this.filterPocket);
+                        const matchType = this.filterType === 'ALL' || t.type === this.filterType;
+                        return matchMonth && matchPocket && matchType;
+                    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+                },
+
+                get currentPocketTransactions() {
+                    if (!this.currentDetailPocket) return [];
+                    return this.transactions.filter(t => {
+                        const matchPocket = t.pocketId === this.currentDetailPocket.id;
+                        const matchType = this.detailFilterType === 'ALL' || t.type === this.detailFilterType;
+                        return matchPocket && matchType;
+                    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+                },
+
+                get currentPocketStats() {
+                    if (!this.currentDetailPocket) return { totalExpense: 0, totalIncome: 0 };
+                    const items = this.transactions.filter(t => t.pocketId === this.currentDetailPocket.id);
+                    const totalExpense = items.filter(t => t.type === 'EXPENSE').reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                    const totalIncome = items.filter(t => t.type === 'INCOME').reduce((sum, t) => sum + Number(t.amount || 0), 0);
+                    return { totalExpense, totalIncome };
+                },
+
+                // 小金库管理
+                openVaultModal(vault = null) {
+                    if (vault) {
+                        this.vaultForm = { ...vault };
+                    } else {
+                        this.vaultForm = { id: null, name: '', icon: '🏴‍☠️', target: '' };
+                    }
+                    this.showVaultModal = true;
+                },
+
+                saveVault() {
+                    if (!this.vaultForm.name) return;
+                    if (this.vaultForm.id) {
+                        const idx = this.vaults.findIndex(v => v.id === this.vaultForm.id);
+                        if (idx !== -1) this.vaults[idx] = { ...this.vaultForm };
+                    } else {
+                        const newVault = {
+                            ...this.vaultForm,
+                            id: 'vault_' + Date.now()
+                        };
+                        this.vaults.push(newVault);
+                        this.currentVaultIndex = this.vaults.length - 1;
+                    }
+                    this.saveStorage();
+                    this.showVaultModal = false;
+                },
+
+                confirmDeleteVault(vault, event) {
+                    if (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    if (!vault) return;
+                    if (confirm(`确认要删除小金库「${vault.name}」吗？`)) {
+                        this.vaults = this.vaults.filter(v => v.id !== vault.id);
+                        if (this.currentVaultIndex >= this.vaults.length) {
+                            this.currentVaultIndex = Math.max(0, this.vaults.length - 1);
+                        }
+                        this.saveStorage();
+                        if (this.currentDetailPocket?.id === vault.id) {
+                            this.showPocketDetailModal = false;
+                        }
+                    }
+                },
+
+                openVaultDetailModal(vault) {
+                    this.currentDetailPocket = {
+                        id: vault.id,
+                        name: vault.name,
+                        icon: vault.icon || '🏴‍☠️',
+                        budget: vault.target || 0,
+                        desc: '独立机动资金库明细',
+                        color: '#18181B'
+                    };
+                    this.detailFilterType = 'ALL';
+                    this.showPocketDetailModal = true;
+                },
+
+                // 修改基准总存款
+                openEditSavingsModal() {
+                    this.tempTotalSavings = this.baseSavings;
+                    this.showEditSavingsModal = true;
+                },
+
+                saveTotalSavings() {
+                    this.baseSavings = Number(this.tempTotalSavings || 0);
+                    this.saveStorage();
+                    this.showEditSavingsModal = false;
+                },
+
+                // 荷包管理
+                openPocketDetailModal(pocket) {
+                    this.currentDetailPocket = pocket;
+                    this.detailFilterType = 'ALL';
+                    this.showPocketDetailModal = true;
+                },
+
+                openAddTransactionForCurrentPocket() {
+                    const targetId = this.currentDetailPocket?.id || '';
+                    // 修复 Bug：先关闭当前明细弹窗，再弹出记账弹窗
+                    this.showPocketDetailModal = false;
+                    setTimeout(() => {
+                        this.openTransactionModal(targetId);
+                    }, 50);
+                },
+
+                openPocketModal(pocket = null) {
+                    if (pocket) {
+                        this.pocketForm = { 
+                            ...pocket,
+                            budget: this.getPocketBudget(pocket)
+                        };
+                    } else {
+                        this.pocketForm = {
+                            id: null,
+                            name: '',
+                            budget: '',
+                            icon: '👛',
+                            desc: '',
+                            type: 'BUDGET',
+                            color: this.morandiColors[Math.floor(Math.random() * this.morandiColors.length)]
+                        };
+                    }
+                    this.showPocketModal = true;
+                },
+
+                savePocket() {
+                    if (!this.pocketForm.name) return;
+                    const pocketId = this.pocketForm.id || ('p_' + Date.now());
+                    const budgetVal = Number(this.pocketForm.budget || 0);
+
+                    if (this.pocketForm.id) {
+                        const idx = this.pockets.findIndex(p => p.id === this.pocketForm.id);
+                        if (idx !== -1) this.pockets[idx] = { ...this.pocketForm };
+                    } else {
+                        this.pockets.push({ ...this.pocketForm, id: pocketId });
+                    }
+
+                    if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
+                    this.monthlyBudgets[this.selectedMonth][pocketId] = budgetVal;
+
+                    this.saveStorage();
+                    this.showPocketModal = false;
+                },
+
+                confirmDeletePocket(pocket, event) {
+                    if (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    if (!pocket) return;
+                    if (confirm(`确认删除荷包「${pocket.name}」吗？`)) {
+                        this.pockets = this.pockets.filter(p => p.id !== pocket.id);
+                        this.transactions = this.transactions.map(t => t.pocketId === pocket.id ? { ...t, pocketId: '' } : t);
+                        this.saveStorage();
+                        if (this.currentDetailPocket?.id === pocket.id) {
+                            this.showPocketDetailModal = false;
+                        }
+                    }
+                },
+
+                openTransactionModal(pocketId = '') {
+                    this.transactionForm = {
+                        id: null,
+                        type: 'EXPENSE',
+                        amount: '',
+                        pocketId: pocketId || '',
+                        date: new Date().toISOString().split('T')[0],
+                        remark: ''
+                    };
+                    this.showTransactionModal = true;
+                },
+
+                saveTransaction() {
+                    if (!this.transactionForm.amount || this.transactionForm.amount <= 0) return;
+                    this.transactions.push({
+                        ...this.transactionForm,
+                        id: 'tx_' + Date.now(),
+                        amount: Number(this.transactionForm.amount)
+                    });
+                    this.saveStorage();
+                    this.showTransactionModal = false;
+                },
+
+                deleteTransaction(id, event) {
+                    if (event) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }
+                    if (confirm('确认删除该笔流水记录吗？')) {
+                        this.transactions = this.transactions.filter(t => t.id !== id);
+                        this.saveStorage();
+                    }
+                },
+
+                formatNumber(val) {
+                    const num = Number(val || 0);
+                    return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
