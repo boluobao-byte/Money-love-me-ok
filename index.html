@@ -613,8 +613,13 @@
          style="display: none;">
         <div @click.outside="showAllocateModal = false" class="bg-white w-full max-w-md rounded-3xl p-6 shadow-lift relative modal-animate border border-black/5">
             <h2 class="text-lg font-black text-zinc-900 mb-2">🎁 从存款分配额度至荷包</h2>
-            <p class="text-xs text-zinc-400 mb-4 font-medium">将总存款池中的资金划拨指定给小荷包或金库作为专属预算</p>
-            
+            <p class="text-xs text-zinc-400 mb-3 font-medium">将总存款池中的资金划拨指定给小荷包或金库作为专属预算</p>
+
+            <div class="flex items-center justify-between bg-cream-100 rounded-2xl px-4 py-2.5 mb-4">
+                <span class="text-[11px] font-bold text-zinc-500">当前可分配存款</span>
+                <span class="text-sm font-black text-emerald-600">¥<span x-text="formatNumber(availableToAllocate)"></span></span>
+            </div>
+
             <form @submit.prevent="saveAllocation()" class="space-y-4">
                 <div>
                     <label class="block text-xs font-bold text-zinc-600 mb-1">划拨金额 (¥)</label>
@@ -658,6 +663,7 @@
                     <div>
                         <label class="block text-xs font-bold text-zinc-600 mb-1">本月分配预算 (¥)</label>
                         <input type="number" step="0.01" min="0" x-model.number="pocketForm.budget" required placeholder="1500" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        <p class="text-[10px] text-zinc-400 mt-1 font-medium">最多可设 ¥<span x-text="formatNumber(availableToAllocate + (pocketForm.id ? getPocketBudget(pocketForm) : 0))"></span></p>
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-zinc-600 mb-1">图标 Emoji</label>
@@ -1212,6 +1218,8 @@
                     if (savedBudgets) { try { this.monthlyBudgets = JSON.parse(savedBudgets); } catch(e){} }
                     if (savedVaults) { try { this.vaults = JSON.parse(savedVaults); } catch(e){} }
 
+                    this.normalizeNumbers();
+
                     // 账号与同步状态
                     this.authToken = localStorage.getItem('pocket_auth_token') || '';
                     this.deviceId = localStorage.getItem('pocket_device_id') || ('dev_' + Math.random().toString(36).slice(2, 10));
@@ -1224,6 +1232,25 @@
                         if (this.syncDirty) this.pushLedger();
                     });
                     this.bootAccount();
+                },
+
+                // 统一金额字段为数字，兼容旧版本/云端存成字符串的脏数据
+                normalizeNumbers() {
+                    this.pockets = (this.pockets || []).map(p => ({ ...p, budget: Number(p.budget) || 0 }));
+                    this.vaults = (this.vaults || []).map(v => ({ ...v, target: Number(v.target) || 0 }));
+                    this.incomeSources = (this.incomeSources || []).map(s => {
+                        const copy = { ...s };
+                        delete copy.amount;
+                        return copy;
+                    });
+                    const budgets = {};
+                    Object.keys(this.monthlyBudgets || {}).forEach(month => {
+                        budgets[month] = {};
+                        Object.keys(this.monthlyBudgets[month] || {}).forEach(pid => {
+                            budgets[month][pid] = Number(this.monthlyBudgets[month][pid]) || 0;
+                        });
+                    });
+                    this.monthlyBudgets = budgets;
                 },
 
                 saveStorage() {
@@ -1404,6 +1431,7 @@
                     if (Array.isArray(data.incomeSources)) this.incomeSources = data.incomeSources;
                     if (data.monthlyBudgets && typeof data.monthlyBudgets === 'object') this.monthlyBudgets = data.monthlyBudgets;
                     if (Array.isArray(data.vaults)) this.vaults = data.vaults;
+                    this.normalizeNumbers();
                     this.saveStorage();
                     this.applyingRemote = false;
                     return true;
@@ -1790,9 +1818,11 @@
                     return inc - exp;
                 },
 
-                // 计算当月所有收入源的总额 (自动计入总存款)
+                // 当月总收入：统计当月全部入账流水（含通用记账、荷包、金库收入）
                 get monthlyTotalIncome() {
-                    return this.currentMonthIncomeSources.reduce((sum, item) => sum + this.getIncomeSourceTotal(item.id), 0);
+                    return this.transactions
+                        .filter(t => t.type === 'INCOME' && t.date && t.date.startsWith(this.selectedMonth))
+                        .reduce((sum, t) => sum + Number(t.amount || 0), 0);
                 },
 
                 // 实时计算的总存款 (基础存款 + 收入累计 - 全局支出)
@@ -1826,13 +1856,17 @@
                     if (!this.incomeSourceForm.name) return;
                     let targetId = this.incomeSourceForm.id;
 
+                    // 收入项目本身不保存 amount（金额由流水统计得出）
+                    const payload = { ...this.incomeSourceForm };
+                    delete payload.amount;
+
                     if (targetId) {
                         const idx = this.incomeSources.findIndex(s => s.id === targetId);
-                        if (idx !== -1) this.incomeSources[idx] = { ...this.incomeSourceForm };
+                        if (idx !== -1) this.incomeSources[idx] = payload;
                     } else {
                         targetId = 'inc_' + Date.now();
                         this.incomeSources.push({
-                            ...this.incomeSourceForm,
+                            ...payload,
                             id: targetId,
                             month: this.selectedMonth
                         });
@@ -1893,15 +1927,21 @@
 
                 saveAllocation() {
                     if (!this.allocateForm.pocketId || !this.allocateForm.amount) return;
-                    const amount = Number(this.allocateForm.amount);
+                    const amount = Number(this.allocateForm.amount) || 0;
                     const pocket = this.pockets.find(p => p.id === this.allocateForm.pocketId);
-                    
-                    if (pocket) {
-                        const currentB = this.getPocketBudget(pocket);
-                        if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
-                        this.monthlyBudgets[this.selectedMonth][pocket.id] = currentB + amount;
-                        this.saveStorage();
+
+                    if (!pocket || amount <= 0) return;
+
+                    const available = this.availableToAllocate;
+                    if (amount > available + 0.005) {
+                        this.toast(`超出可分配存款，最多还能分配 ¥${this.formatNumber(available)}`);
+                        return;
                     }
+
+                    const currentB = this.getPocketBudget(pocket);
+                    if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
+                    this.monthlyBudgets[this.selectedMonth][pocket.id] = currentB + amount;
+                    this.saveStorage();
                     this.showAllocateModal = false;
                 },
 
@@ -1948,13 +1988,18 @@
                 getPocketBudget(pocket) {
                     if (!pocket) return 0;
                     if (this.monthlyBudgets[this.selectedMonth] && this.monthlyBudgets[this.selectedMonth][pocket.id] !== undefined) {
-                        return this.monthlyBudgets[this.selectedMonth][pocket.id];
+                        return Number(this.monthlyBudgets[this.selectedMonth][pocket.id]) || 0;
                     }
-                    return Number(pocket.budget || 0);
+                    return Number(pocket.budget) || 0;
                 },
 
                 get totalBudgeted() {
                     return this.pockets.reduce((sum, p) => sum + this.getPocketBudget(p), 0);
+                },
+
+                // 可分配额度 = 当前总存款 - 本月已分配预算
+                get availableToAllocate() {
+                    return Math.max(0, this.computedTotalSavings - this.totalBudgeted);
                 },
 
                 getPocketSpent(pocketId) {
@@ -2029,12 +2074,13 @@
 
                 saveVault() {
                     if (!this.vaultForm.name) return;
+                    const payload = { ...this.vaultForm, target: Number(this.vaultForm.target) || 0 };
                     if (this.vaultForm.id) {
                         const idx = this.vaults.findIndex(v => v.id === this.vaultForm.id);
-                        if (idx !== -1) this.vaults[idx] = { ...this.vaultForm };
+                        if (idx !== -1) this.vaults[idx] = payload;
                     } else {
                         const newVault = {
-                            ...this.vaultForm,
+                            ...payload,
                             id: 'vault_' + Date.now()
                         };
                         this.vaults.push(newVault);
@@ -2126,13 +2172,21 @@
                 savePocket() {
                     if (!this.pocketForm.name) return;
                     const pocketId = this.pocketForm.id || ('p_' + Date.now());
-                    const budgetVal = Number(this.pocketForm.budget || 0);
+                    const budgetVal = Number(this.pocketForm.budget) || 0;
+                    const oldBudget = this.pocketForm.id ? this.getPocketBudget(this.pocketForm) : 0;
+
+                    // 编辑时原预算已占用额度，可设上限需加上它
+                    const maxBudget = this.availableToAllocate + oldBudget;
+                    if (budgetVal > maxBudget + 0.005) {
+                        this.toast(`超出可分配存款，最多可设 ¥${this.formatNumber(maxBudget)}`);
+                        return;
+                    }
 
                     if (this.pocketForm.id) {
                         const idx = this.pockets.findIndex(p => p.id === this.pocketForm.id);
-                        if (idx !== -1) this.pockets[idx] = { ...this.pocketForm };
+                        if (idx !== -1) this.pockets[idx] = { ...this.pocketForm, id: pocketId, budget: budgetVal };
                     } else {
-                        this.pockets.push({ ...this.pocketForm, id: pocketId });
+                        this.pockets.push({ ...this.pocketForm, id: pocketId, budget: budgetVal });
                     }
 
                     if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
