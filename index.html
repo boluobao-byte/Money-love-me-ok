@@ -427,15 +427,18 @@
 
                     <div class="mt-5 pt-3 border-t border-black/5 space-y-2">
                         <div class="flex justify-between items-end text-xs">
-                            <span class="font-bold text-zinc-500">已用 / 额度</span>
-                            <span class="font-extrabold text-zinc-900">
-                                ¥<span x-text="formatNumber(getPocketSpent(pocket.id))"></span> / ¥<span x-text="formatNumber(getPocketBudget(pocket))"></span>
-                                <span class="text-[11px] text-zinc-500 font-bold ml-1" x-text="`(${getPocketProgress(pocket)}%)`"></span>
+                            <span class="font-bold text-zinc-500" x-text="isPocketOver(pocket) ? '已超支 / 额度' : '已用 / 额度'"></span>
+                            <span class="font-extrabold" :class="isPocketOver(pocket) ? 'text-rose-500' : 'text-zinc-900'">
+                                ¥<span x-text="formatNumber(getPocketSpent(pocket.id))"></span>
+                                <span x-text="getPocketBudget(pocket) > 0 ? ' / ¥' + formatNumber(getPocketBudget(pocket)) : ' / 未设预算'"></span>
+                                <span class="text-[11px] font-bold ml-1" :class="isPocketOver(pocket) ? 'text-rose-500' : 'text-zinc-500'"
+                                      x-show="getPocketBudget(pocket) > 0" x-text="`(${getPocketProgress(pocket)}%)`"></span>
                             </span>
                         </div>
 
                         <div class="w-full h-2.5 bg-black/10 rounded-full overflow-hidden p-0.5">
-                            <div class="h-full bg-black rounded-full transition-all duration-300"
+                            <div class="h-full rounded-full transition-all duration-300"
+                                 :class="isPocketOver(pocket) ? 'bg-rose-500' : 'bg-black'"
                                  :style="`width: ${Math.min(100, getPocketProgress(pocket))}%`"></div>
                         </div>
                     </div>
@@ -662,7 +665,7 @@
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-zinc-600 mb-1">本月分配预算 (¥)</label>
-                        <input type="number" step="0.01" min="0" x-model.number="pocketForm.budget" required placeholder="1500" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        <input type="number" step="0.01" min="0.01" x-model.number="pocketForm.budget" required placeholder="1500" class="w-full bg-cream-100 border border-black/10 rounded-2xl px-4 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
                         <p class="text-[10px] text-zinc-400 mt-1 font-medium">最多可设 ¥<span x-text="formatNumber(availableToAllocate + (pocketForm.id ? getPocketBudget(pocketForm) : 0))"></span></p>
                     </div>
                     <div>
@@ -1028,8 +1031,10 @@
                                     class="mr-auto px-3 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">🤖 AI 重解析</button>
                             <button type="button" @click="chatDraft = null; chatDraftQueue = []"
                                     class="px-4 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
-                            <button type="button" @click="confirmChatDraft()"
-                                    class="bg-black text-neon hover:bg-zinc-800 px-5 py-2 rounded-full font-bold text-[11px] shadow-md transition cursor-pointer">确认入账</button>
+                            <button type="button" @click="confirmChatDraft()" :disabled="chatParsing"
+                                    :class="chatParsing ? 'bg-zinc-300 text-white cursor-not-allowed' : 'bg-black text-neon hover:bg-zinc-800 cursor-pointer'"
+                                    class="px-5 py-2 rounded-full font-bold text-[11px] shadow-md transition"
+                                    x-text="chatParsing ? '解析中…' : '确认入账'"></button>
                         </div>
                     </div>
                 </template>
@@ -1139,6 +1144,8 @@
                 chatPendingText: '',
                 chatLastTxId: null,
                 chatDraftQueue: [],      // 一句话里识别出的后续账目，逐笔确认
+                chatParsing: false,      // 正在解析（AI 兜底时有网络等待），期间禁用确认
+                chatParseQueue: [],      // 连续快速发言时排队，避免上一笔被覆盖
                 chatQuickPhrases: ['昨天奶茶12', '午饭花了28', '打车15', '收到工资8000', '昨天收入500，花了30买零食'],
 
                 // 账号 / 云同步 / 自主学习
@@ -1940,7 +1947,8 @@
 
                     const currentB = this.getPocketBudget(pocket);
                     if (!this.monthlyBudgets[this.selectedMonth]) this.monthlyBudgets[this.selectedMonth] = {};
-                    this.monthlyBudgets[this.selectedMonth][pocket.id] = currentB + amount;
+                    // 金额一律按分取整，避免 1.01+2.55+10.8 存成 2164.8600000000006
+                    this.monthlyBudgets[this.selectedMonth][pocket.id] = Math.round((currentB + amount) * 100) / 100;
                     this.saveStorage();
                     this.showAllocateModal = false;
                 },
@@ -2013,6 +2021,12 @@
                     if (!pocket || budget <= 0) return 0;
                     const spent = this.getPocketSpent(pocket.id);
                     return Math.round((spent / budget) * 100);
+                },
+
+                // 超支（预算 > 0 且已用超出）用于标红
+                isPocketOver(pocket) {
+                    const budget = this.getPocketBudget(pocket);
+                    return budget > 0 && this.getPocketSpent(pocket.id) > budget;
                 },
 
                 getPocketName(pocketId) {
@@ -2173,6 +2187,10 @@
                     if (!this.pocketForm.name) return;
                     const pocketId = this.pocketForm.id || ('p_' + Date.now());
                     const budgetVal = Number(this.pocketForm.budget) || 0;
+                    if (budgetVal <= 0) {
+                        this.toast('预算要大于 0，先给这个荷包分配一点额度吧');
+                        return;
+                    }
                     const oldBudget = this.pocketForm.id ? this.getPocketBudget(this.pocketForm) : 0;
 
                     // 编辑时原预算已占用额度，可设上限需加上它
@@ -2302,6 +2320,8 @@
                     t = t.replace(/(\d+(?:\.\d+)?)\s*(?:w|W)(?![a-zA-Z])/g, (m, a) => String(Number(a) * 10000));
                     t = t.replace(/(\d+(?:\.\d+)?)\s*千(?![克g])/g, (m, a) => String(Number(a) * 1000));
                     t = t.replace(/(\d+(?:\.\d+)?)\s*万/g, (m, a) => String(Number(a) * 10000));
+                    // 18块88 / 28元50 → 18.88 / 28.50（两位角分要先于下面的一位数规则）
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*(?:块|元)\s*(\d{2})(?![\d.])/g, (m, a, b) => a + '.' + b);
                     // 28块5 / 28元5 → 28.5
                     t = t.replace(/(\d+(?:\.\d+)?)\s*(?:块|元)\s*([1-9])(?![0-9.])/g, (m, a, b) => a + '.' + b);
                     // 三块五 / 十五块八 → 3.5 / 15.8
@@ -2363,10 +2383,15 @@
                 parseAmount(text) {
                     const t = this.normalizeMoneyWords(this.normalizeText(text));
 
+                    // 概数（几十块 / 十几块 / 好几千）不硬猜，交给对话反问具体金额
+                    if (!/[0-9０-９]/.test(t) && /(?:好几|几)\s*[十百千万]|[十百千万]\s*几/.test(t)) return null;
+                    // 量体语境（身高1米8 / 体重60公斤）不是金额
+                    if (!/(块钱|元钱|块|元|圆|钱|¥|￥|rmb)/i.test(t) && /(身高|体重|气温|温度|体温|室温)/.test(t)) return null;
+
                     const candidates = [];
                     // 记账语境里的“钱相关动词/名词”，用于把金额和最近的语义绑在一起
                     const verbRe = /(花了|花掉|花去|花了钱|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|充|交了|交|还了|还|收到|收了|收入|赚了|挣了|到账|入账|进账|发了|发|存了|存|攒了|攒|转了|转|报销|退款|退了|工资|薪水|奖金|红包|补贴|提成|付费|订|请客|送了|送|给|打车|加油|停车|挂号|缴费|扣了|房租|水电|话费|网费|学费|零食|奶茶|外卖|电影)/;
-                    const numUnitRe = /^\s*(号|日|月|点|岁|个|次|天|分钟|小时|km|公里|g|ml|杯|瓶|斤|份|人|晚|%|折)/i;
+                    const numUnitRe = /^\s*(号|号房|房间|房|室|床|楼|层|栋|单元|排|座|度|℃|岁|个|位|次|天|分钟|小时|秒|页|章|集|km|公里|米|厘米|cm|mm|g|kg|公斤|ml|升|杯|瓶|斤|份|人|晚|%|折|日|月|点)/i;
                     const moneyUnitRe = /^\s*(块钱|元钱|块|元|圆|rmb|r\b|¥)/i;
 
                     // 金额前最近的动词离得越近，越可能是这笔账的金额
@@ -2413,6 +2438,8 @@
 
                     if (!candidates.length) return null;
                     candidates.sort((a, b) => b.score - a.score);
+                    // 全是负分说明数字都跟着非金额单位（302房间 / 25度），不当作金额
+                    if (candidates[0].score < 0) return null;
                     return candidates[0];
                 },
 
@@ -2438,7 +2465,7 @@
                             let score = 1;
                             if (/(块钱|元钱|块|元|圆|rmb|¥)\s*$/i.test(m[0]) || /^\s*(块钱|元钱|块|元|圆)/i.test(after)) score += 6;
                             if (/(¥|￥|\$)\s*$/.test(before)) score += 4;
-                            if (/^\s*(号|日|月|点(?![心外菜餐])|岁|个|次|天|分钟|小时|km|公里|g|ml|杯|瓶|斤|份|人|晚(?![饭上安])|%|折)/i.test(after)) score -= 7;
+                            if (/^\s*(号|号房|房间|房|室|床|楼|层|栋|单元|排|座|度|℃|岁|个|位|次|天|分钟|小时|秒|页|章|集|km|公里|米|厘米|cm|mm|g|kg|公斤|ml|升|杯|瓶|斤|份|人|晚(?![饭上安])|%|折|日|月|点(?![心外菜餐]))/i.test(after)) score -= 7;
                             if (/^\s*[-\/]\d/.test(after)) score -= 20;
                             if (/(花了|花掉|花去|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|充|交了|交|还了|还|收到|收了|收入|赚了|挣了|到账|入账|进账|发了|发|存了|存|攒了|攒|转了|转|报销|退款|退了|工资|薪水|奖金|红包|补贴|提成|付费|订|请客|送了|送|给|打车|加油|停车|挂号|缴费|扣了|房租|水电|话费|网费|学费|零食|奶茶|外卖|电影)\s*$/.test(before)) score += 6;
                             list.push({ num, score, index: start, end });
@@ -2516,16 +2543,17 @@
                     // 用空格隔开的多笔：“早饭8 午饭25”
                     if (clauses.length < 2) {
                         const sp = text.split(/\s+/).filter(Boolean);
-                        if (sp.length >= 2 && sp.every(s => { const a = this.parseAmount(s); return a && a.score >= 1; })) clauses = sp;
+                        if (sp.length >= 2 && sp.every(s => { const a = this.parseAmount(s); return a && a.score >= 0; })) clauses = sp;
                     }
                     if (clauses.length < 2) clauses = this.splitInlineMulti(text);
 
                     // 没金额的碎片（“嗯”“昨天买了点零食”）并到下一段，避免把一句话拆碎
+                    // 没有「块/元」单位的中文金额（午饭二十）分值只有 0，也要认
                     const packed = [];
                     let carry = '';
                     for (const c of clauses) {
                         const a = this.parseAmount(c);
-                        if (a && a.score >= 1) {
+                        if (a && a.score >= 0) {
                             packed.push((carry ? carry + ' ' : '') + c);
                             carry = '';
                         } else {
@@ -2578,8 +2606,9 @@
                     // 3月5日
                     consume(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/, m => {
                         const y = now.getFullYear();
-                        let d = new Date(y, Number(m[1]) - 1, Number(m[2]));
-                        if (d > base) d = new Date(y - 1, Number(m[1]) - 1, Number(m[2]));
+                        const d = new Date(y, Number(m[1]) - 1, Number(m[2]));
+                        // 只说月日时默认今年：只有远超未来（>60天）才认为说的是去年
+                        if (d - base > 60 * 86400000) return mk(new Date(y - 1, Number(m[1]) - 1, Number(m[2])));
                         return mk(d);
                     });
 
@@ -2641,18 +2670,18 @@
                         return shift(/前/.test(m[2]) ? -n : n);
                     });
 
-                    // 周三 / 上周五 / 星期天
-                    consume(/(上上|上|这|本)?\s*(?:周|星期|礼拜)([一二三四五六日天])/, m => {
-                        const map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+                    // 周三 / 上周五 / 下周X / 星期天（周一为一周起点）
+                    consume(/(下下|下|上上|上|这|本)?\s*(?:周|星期|礼拜)([一二三四五六日天])/, m => {
+                        const map = { '一': 0, '二': 1, '三': 2, '四': 3, '五': 4, '六': 5, '日': 6, '天': 6 };
                         const target = map[m[2]];
-                        const cur = base.getDay();
+                        const cur = (base.getDay() + 6) % 7;
                         let diff = target - cur;
-                        if (m[1] === '这' || m[1] === '本') {
+                        if (m[1] === '下') diff += 7;
+                        else if (m[1] === '下下') diff += 14;
+                        else if (m[1] === '上') diff -= 7;
+                        else if (m[1] === '上上') diff -= 14;
+                        else if (m[1] === '这' || m[1] === '本') {
                             // 本周：未来几天也算本周
-                        } else if (m[1] === '上') {
-                            diff -= 7;
-                        } else if (m[1] === '上上') {
-                            diff -= 14;
                         } else if (diff > 0) {
                             // 只说"周三"时通常指已经过去的那天
                             diff -= 7;
@@ -2697,7 +2726,12 @@
                     // 发红包 / 随礼是人情支出
                     if (/(发红包|给.{0,8}红包|随礼|份子钱|送礼)/.test(t)) return 'EXPENSE';
                     // 收红包是收入
-                    if (/(收到红包|收红包|抢红包|收了个红包|收了个大红包)/.test(t)) return 'INCOME';
+                    if (/(收到红包|收红包|抢红包|抢到红包|抢了个红包|收了个红包|收了个大红包|红包到账)/.test(t)) return 'INCOME';
+                    // 报销 / 退款 / 返现：钱回到自己手里 → 收入（要压过“打车/房租”等支出名词）
+                    if (/(报销|退款|退钱|返现|返利)/.test(t)) {
+                        if (/(给|替|帮)\S{0,6}(退款|退钱|退回|报销)/.test(t)) return 'EXPENSE';
+                        return 'INCOME';
+                    }
                     // 别人还钱给我（“朋友还钱500”“小王还了我300”）是收入；注意“还朋友钱”仍是支出
                     if (/(?:朋友|同事|同学|闺蜜|兄弟|姐妹|对象|老婆|老公|家人|亲戚|爸|妈|哥|姐|弟|妹|小王|小李|小张|小刘|老王|老张|室友|房东)\S{0,4}(?:还钱|还了我|还给我|还我|退给我|退我)/.test(t)) return 'INCOME';
                     // “别人给我转/还给我/给我钱”是收入（先于“给…转”判断）
@@ -2818,7 +2852,7 @@
                     s = s.replace(/[kK](?![a-zA-Z])/g, ' ');
                     s = s.replace(/[一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+(块钱|元钱|块|元|圆|钱)?/g, ' ');
                     s = s.replace(/[零〇]+(?=\s*(?:块钱|元钱|块|元|圆|钱|\d))/g, ' ');
-                    s = s.replace(/(今天|今晚|今日|昨天|昨晚|昨日|前天|大前天|明天|后天|大后天|刚才|刚刚|上上个月|上个月|上月|下个月|下月|这个月|本月|月初|月底|月中|月末|上上|上周|这周|本周|星期[一二三四五六日天]|礼拜[一二三四五六日天]|周[一二三四五六日天]|\d+\s*[月号日天]|早上|早晨|上午|中午|下午|晚上|傍晚|夜里|半夜|凌晨|清晨|母亲节|父亲节|教师节|情人节|中秋节|端午节|春节|元旦|国庆节|国庆)/g, ' ');
+                    s = s.replace(/(今天|今晚|今日|昨天|昨晚|昨日|前天|大前天|明天|后天|大后天|刚才|刚刚|上上个月|上个月|上月|下个月|下月|这个月|本月|月初|月底|月中|月末|上上|上周|这周|本周|下下周|下周|星期[一二三四五六日天]|礼拜[一二三四五六日天]|周[一二三四五六日天]|\d+\s*[月号日天]|早上|早晨|上午|中午|下午|晚上|傍晚|夜里|半夜|凌晨|清晨|母亲节|父亲节|教师节|情人节|中秋节|端午节|春节|元旦|国庆节|国庆)/g, ' ');
                     s = s.replace(/(花了|花掉|花去|花(?!生|椒|瓶|瓣|园|店|语|呗)|用了|用掉|付了|支付了|支付|消费了|消费|收到|收了|收入|赚了|赚到|到账|入账|进账|发工资|发工资了|发了工资|发了|存进|存入|存到|存起来|存了|攒了|攒到|攒起来|放进|转入|挪到|打赏|给了|转了|转我|转给|买了|吃了|喝了|点了|报了|看了|还款|一笔|记账|记一下|记录一下|记下|记上|记到|帮我记)/g, ' ');
                     s = s.replace(/(我|你|他|她|它|我们|你们|他们|块钱|元钱|块|元|圆|钱|的|了|呢|啊|吧|呀|哦|嘛|嗯|呃|唉|那个|这个|就是|今天|昨天|请|帮我|麻烦|一共|总共|大概|差不多|不到|将近|左右|上下|下来|然后|还有|还|又|再|顺便|跟|和|与|给|帮|替|来|把|到|没吃|没喝|没买|没花|没(?=啥|吃|喝|买|花|用)|人均|aa|AA|就(?!业|餐|是|算|位)|也(?!许)|啥|随便|整整|整(?![理个天体齐洁])|共(?![享同产和])|吃吃|喝喝|买买|逛逛)/g, ' ');
                     s = s.replace(/(个|杯|瓶|袋|盒|份|斤|公斤|克|双|件|条|张|只|人|次|顿|碗|盘|串|堆|包(?!子|括|装|邮|月|年|厢|袱)|点儿?|些|多|毛|角)/g, ' ');
@@ -2906,6 +2940,24 @@
                 },
 
                 async handleUtterance(text) {
+                    // 上一句还在解析（可能在等 AI）：先排队，解析完再依次处理，避免草稿互相覆盖
+                    if (this.chatParsing) {
+                        this.chatParseQueue.push(text);
+                        return;
+                    }
+                    this.chatParsing = true;
+                    try {
+                        await this.handleUtteranceOnce(text);
+                    } finally {
+                        this.chatParsing = false;
+                        if (this.chatParseQueue.length) {
+                            const next = this.chatParseQueue.shift();
+                            this.handleUtterance(next);
+                        }
+                    }
+                },
+
+                async handleUtteranceOnce(text) {
                     // 上一句缺金额：这次只说数字，就拼起来
                     let input = text;
                     if (this.chatPendingText && /^\s*[0-9.０-９]+\s*$/.test(text)) {
@@ -2924,6 +2976,11 @@
                             const ok = await this.tryAiParse(input);
                             if (ok) { this.chatPendingText = ''; return; }
                         }
+                        // 概数（几十块）不硬猜，明确回问具体金额
+                        if (/(?:好几|几)\s*[十百千万]|[十百千万]\s*几/.test(input)) {
+                            this.pushChat('bot', '「几十块」这种大概数我先不猜～具体花了多少？直接回个数字就行（比如 35）。');
+                            return;
+                        }
                         this.pushChat('bot', '这句我还没听出金额～这笔大概多少钱？直接回个数字就行（比如 28）。');
                         return;
                     }
@@ -2940,6 +2997,15 @@
 
                 applyDrafts(drafts, text) {
                     if (!drafts || !drafts.length) return;
+                    // 上一句还有没确认的草稿：新说的是另一句话，就接力到队尾，不能覆盖
+                    const sameUtterance = this.chatDraft && (this.chatDraft.text || '') === (text || '');
+                    if (this.chatDraft && !sameUtterance) {
+                        this.chatDraftQueue = this.chatDraftQueue.concat(drafts);
+                        const lines = drafts.map(d => `${d.type === 'INCOME' ? '收入' : '支出'} ¥${this.formatNumber(d.amount)}${d.note ? ' · ' + d.note : ''}`);
+                        this.pushChat('bot', `又听懂了 ${drafts.length} 笔：\n${lines.join('\n')}\n已排进待确认队列，先确认上一笔👇`);
+                        return;
+                    }
+
                     this.chatDraft = drafts[0];
                     this.chatDraftQueue = drafts.slice(1);
                     this.syncChatSelect();
@@ -3030,6 +3096,8 @@
                 },
 
                 confirmChatDraft() {
+                    // 还在解析（可能有 AI 兜底等待）时草稿可能马上被替换，先不让确认
+                    if (this.chatParsing) return;
                     const d = this.chatDraft;
                     if (!d) return;
                     const tx = this.commitDraft(d);
@@ -3047,6 +3115,7 @@
 
                 // 一次性把当前这笔 + 队列里的都入账
                 confirmAllChatDrafts() {
+                    if (this.chatParsing) return;
                     if (!this.chatDraft) return;
                     const all = [this.chatDraft, ...this.chatDraftQueue];
                     const ids = [];
