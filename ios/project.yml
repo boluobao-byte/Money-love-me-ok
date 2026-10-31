@@ -1,0 +1,50 @@
+# XcodeGen 工程描述：在装有 Xcode 的 Mac 上执行
+#   brew install xcodegen && xcodegen generate
+# 生成 Pocket.xcodeproj 后，在 Xcode 里选自己的 Team 签名即可装到 iPhone。
+name: Pocket
+
+options:
+  bundleIdPrefix: top.qiuli55
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  Pocket:
+    type: application
+    platform: iOS
+    sources:
+      - path: Pocket
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: top.qiuli55.pocket
+        PRODUCT_NAME: Pocket
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: Pocket/Info.plist
+      properties:
+        CFBundleDisplayName: 口袋荷包
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UIRequiresFullScreen: true
+        # 奶油底 + 深色字，跟随页面配色
+        UIStatusBarStyle: UIStatusBarStyleDarkContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # iOS 14+ 的原生启动屏：奶油色背景 + 居中图标，替代白屏
+        UILaunchScreen:
+          UIColorName: Cream
+          UIImageName: LaunchLogo
+          UIImageRespectsSafeAreaInsets: true
+        ITSAppUsesNonExemptEncryption: false
