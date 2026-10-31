@@ -8,10 +8,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="口袋荷包">
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Alpine.js 交互引擎 -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Tailwind CSS（本地内置，避免 CDN 被墙导致样式/交互失效） -->
+    <script src="./vendor/tailwind.min.js"></script>
+    <!-- Alpine.js 交互引擎（本地内置，避免 CDN 被墙导致按钮全部失灵） -->
+    <script defer src="./vendor/alpine.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
