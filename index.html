@@ -1154,6 +1154,22 @@
                     '美容': ['理发', '美发', '美甲', '美容', '剪头', '剪头发', '烫头', '染发', '洗头', '剃头', '指甲', '美睫', '种睫毛', '纹眉', '洗脸']
                 },
 
+                // 语义分类命中但账本里还没有这个荷包时，自动新建的默认外观
+                pocketAutoMeta: {
+                    '餐饮': { icon: '🍔', desc: '日常三餐与餐饮支出' },
+                    '交通': { icon: '🚗', desc: '打车、地铁、加油等出行开销' },
+                    '购物': { icon: '🛍️', desc: '网购、衣服、数码等购物开销' },
+                    '日用': { icon: '🧴', desc: '超市日用、洗护清洁用品' },
+                    '住房': { icon: '🏠', desc: '房租、水电燃气、物业' },
+                    '娱乐': { icon: '🎬', desc: '电影、游戏、旅游、健身' },
+                    '医疗': { icon: '💊', desc: '看病、买药、体检' },
+                    '通讯': { icon: '📱', desc: '话费、流量、宽带' },
+                    '学习': { icon: '📚', desc: '书籍、课程、培训' },
+                    '宠物': { icon: '🐱', desc: '猫粮狗粮、宠物医疗' },
+                    '人情': { icon: '🎁', desc: '红包、礼物、随礼' },
+                    '美容': { icon: '💇', desc: '理发、美甲、护肤' }
+                },
+
                 incomeSourceForm: { id: null, category: 'MAIN', name: '', amount: '', icon: '💼' },
                 allocateForm: { pocketId: '', amount: '' },
                 pocketForm: { id: null, name: '', budget: '', icon: '👛', desc: '', color: '#FFF1E6', type: 'BUDGET' },
@@ -1532,6 +1548,40 @@
                     const v = this.vaults.find(x => x.name === n);
                     if (v) return v.id;
                     return inc ? inc.id : '';
+                },
+
+                // 语义识别出「疑似某个分类」但账本里还没有对应荷包/收入项目时，自动建一个
+                ensureSuggestedTarget(suggest) {
+                    if (!suggest || !suggest.name) return '';
+                    const name = suggest.name;
+                    if (suggest.kind === 'income') {
+                        const found = this.incomeSources.find(s => s.name === name);
+                        if (found) return found.id;
+                        const id = 'inc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+                        this.incomeSources.push({
+                            id,
+                            category: suggest.category || 'SUB',
+                            name,
+                            icon: suggest.icon || '💼',
+                            month: this.selectedMonth
+                        });
+                        this.saveStorage();
+                        return id;
+                    }
+                    const found = this.pockets.find(p => p.name === name);
+                    if (found) return found.id;
+                    const meta = this.pocketAutoMeta[name] || {};
+                    const id = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5);
+                    this.pockets.push({
+                        id,
+                        name,
+                        budget: 0,
+                        icon: meta.icon || '👛',
+                        desc: meta.desc || '说一句话自动归类',
+                        color: this.morandiColors[this.pockets.length % this.morandiColors.length]
+                    });
+                    this.saveStorage();
+                    return id;
                 },
 
                 learnedType(text) {
@@ -2563,6 +2613,8 @@
                     // “别人给我转/还给我/给我钱”是收入（先于“给…转”判断）
                     if (/(给我转|转给我|给我转账|转账给我|还给我|退给我|打给我)/.test(t)) return 'INCOME';
                     if (/(?:转|打|给|发|退|还)(?:了)?我\s*(?:[0-9]|[一二两三四五六七八九十百千万]|块钱|元钱)/.test(t) && !/(买|吃|喝|花|付|交|充|请客)/.test(t)) return 'INCOME';
+                    // 家里人转来的生活费/零花钱是收入（“妈转生活费300”）；“给妈转生活费”仍是支出
+                    if (/^(?:我妈|我爸|我?妈|我?爸|爸妈|父母|家里|老妈|老爸|老公|老婆|对象|女朋友|男朋友|弟弟|妹妹|哥哥|姐姐)(?:给|转|打|发)/.test(t) && /(生活费|零花钱|家用|钱)/.test(t)) return 'INCOME';
                     if (strongIncome.test(t) && !strongExpense.test(t)) return 'INCOME';
                     return 'EXPENSE';
                 },
@@ -2595,19 +2647,30 @@
                         if (/(报销|退款|退钱|退了|退回|返现|还钱|还我|还给我|还了我)/.test(t)) return { pocketId: '', note: '通用存款池' };
 
                         let best = null, bestScore = 0;
+                        const isSub = /(副业|兼职|稿费|外快|接单|私活|报酬)/.test(t);
+                        // 账本里副业项目的 category 是 SIDE（兼容历史数据 SUB）
+                        const isSide = s => s.category === 'SIDE' || s.category === 'SUB';
+                        const hasSub = this.incomeSources.some(isSide);
                         for (const s of this.currentMonthIncomeSources) {
                             const nm = (s.name || '').toLowerCase();
                             let score = 0;
                             if (nm && t.includes(nm)) score += 100;
                             if (s.category === 'MAIN' && /(工资|薪资|薪水|月薪|奖金|年终奖|主业)/.test(t)) score += 40;
-                            if (s.category === 'SUB' && /(副业|兼职|稿费|外快|接单|项目)/.test(t)) score += 40;
+                            if (isSide(s) && /(副业|兼职|稿费|外快|接单|项目)/.test(t)) score += 40;
                             if (score > bestScore) { bestScore = score; best = s; }
                         }
+                        // 明显是副业收入但还没建副业项目 → 确认时自动建一个
+                        if (isSub && !hasSub) {
+                            return { pocketId: '', note: '疑似副业收入，确认后自动新建收入项目', suggest: { kind: 'income', name: '副业收入', category: 'SIDE', icon: '🚀' } };
+                        }
                         if (best) return { pocketId: best.id, note: `收入项目「${best.name}」` };
+                        // 生活费/红包/补贴这类“非工资”收入，不要硬塞进主业工资
+                        if (/(生活费|零花钱|家用|红包|礼金|压岁钱|补贴|分红|利息)/.test(t)) {
+                            return { pocketId: '', note: '记到通用存款池（可改）' };
+                        }
                         const main = this.incomeSources.find(s => s.category === 'MAIN');
                         if (main) {
-                            const subHint = /(副业|兼职|稿费|外快|接单|项目)/.test(t) && main.category !== 'SUB' ? '疑似副业收入，' : '';
-                            return { pocketId: main.id, note: `收入项目「${main.name}」（${subHint}可改）` };
+                            return { pocketId: main.id, note: `收入项目「${main.name}」（可改）` };
                         }
                         return { pocketId: '', note: '通用存款池' };
                     }
@@ -2638,16 +2701,18 @@
                             if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
                         }
                         const ownHit = (only.name || '').includes(guess) || this.pocketKeywords(only).some(kw => kw && t.includes(kw.toLowerCase()));
-                        const note = guess && !ownHit
-                            ? `疑似「${guess}」开销，暂记「${only.name}」（可改）`
-                            : `小荷包「${only.name}」（可改）`;
-                        return { pocketId: only.id, note };
+                        // 只有这一个荷包，但语义明显属于别的分类 → 确认时自动新建对应小荷包
+                        if (guess && !ownHit) {
+                            return { pocketId: '', note: `疑似「${guess}」开销，确认后自动新建小荷包`, suggest: { kind: 'pocket', name: guess } };
+                        }
+                        return { pocketId: only.id, note: `小荷包「${only.name}」（可改）` };
                     }
                     let guess = '';
                     for (const key of Object.keys(this.pocketKeywordDict)) {
                         if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
                     }
-                    return { pocketId: '', note: guess ? `请选择分类（疑似「${guess}」）` : '请选择分类' };
+                    if (guess) return { pocketId: '', note: `请选择分类（疑似「${guess}」）`, suggest: { kind: 'pocket', name: guess } };
+                    return { pocketId: '', note: '请选择分类' };
                 },
 
                 // 从原句里提取一个干净的备注
@@ -2701,7 +2766,8 @@
                         date: dateInfo.date || defaultDate || this.todayStr(),
                         dateExplicit: dateInfo.hasDate || !!defaultDate,
                         remark,
-                        note: target.note || ''
+                        note: target.note || '',
+                        suggest: target.suggest || null
                     };
                 },
 
@@ -2797,13 +2863,25 @@
                 },
 
                 draftFromParsed(p, text) {
+                    let pocketId = p.pocketId;
+                    let note = p.note;
+                    // 语义分类命中了账本里还没有的分类：确认前自动建好，保证“说一句话就归到准确分类”
+                    if (!pocketId && p.suggest) {
+                        const created = this.ensureSuggestedTarget(p.suggest);
+                        if (created) {
+                            pocketId = created;
+                            note = p.suggest.kind === 'income'
+                                ? `已按语义新建收入项目「${p.suggest.name}」`
+                                : `已按语义放进新小荷包「${p.suggest.name}」`;
+                        }
+                    }
                     const d = {
                         type: p.type,
                         amount: p.amount,
-                        pocketId: p.pocketId,
+                        pocketId,
                         date: p.date,
                         remark: p.remark,
-                        note: p.note,
+                        note,
                         text: text || p.text || ''
                     };
                     d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
