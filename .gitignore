@@ -3,3 +3,4 @@ android/keystore/
 android/app/src/main/build/
 android/*.apk
 .DS_Store
+android/*.idsig
