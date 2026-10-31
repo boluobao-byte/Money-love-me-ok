@@ -8,10 +8,15 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="口袋荷包">
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Alpine.js 交互引擎 -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <meta name="theme-color" content="#FAF9F6">
+    <meta name="description" content="口袋荷包：两个人共用一本账，说一句话就记好">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="icon" href="./icons/icon-192.png">
+    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <!-- Tailwind CSS（本地内置，避免 CDN 被墙导致样式/交互失效） -->
+    <script src="./vendor/tailwind.min.js"></script>
+    <!-- Alpine.js 交互引擎（本地内置，避免 CDN 被墙导致按钮全部失灵） -->
+    <script defer src="./vendor/alpine.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -90,6 +95,26 @@
             from { opacity: 0; transform: scale(0.95) translateY(10px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
         }
+        /* 对话记账助手 */
+        .chat-pulse {
+            animation: chatPulse 1.1s ease-in-out infinite;
+        }
+        @keyframes chatPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.6; }
+        }
+        .chat-bubble-in {
+            animation: bubbleIn 0.18s ease-out;
+        }
+        @keyframes bubbleIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-input::-webkit-outer-spin-button,
+        .chat-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center pb-24" x-data="pocketApp()">
@@ -106,7 +131,11 @@
             </div>
         </div>
 
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2">
+            <button @click="openAccount()" class="relative w-10 h-10 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-sm font-black text-zinc-700 active:scale-95 transition cursor-pointer" title="账号与云同步">
+                <span x-text="authUser ? ((authUser.nickname || '我').slice(0, 1)) : '👤'"></span>
+                <span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white" :class="syncDotClass()"></span>
+            </button>
             <button @click="openTransactionModal()" class="bg-black hover:bg-zinc-800 text-neon px-5 py-2.5 rounded-full font-bold text-xs shadow-capsule transition-all duration-200 flex items-center space-x-2 active:scale-95 group border border-zinc-800 cursor-pointer">
                 <svg class="w-4 h-4 stroke-current stroke-[2.5] transition-transform group-hover:rotate-90" fill="none" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
                 <span>记一笔</span>
@@ -800,7 +829,224 @@
         </div>
     </div>
 
+    <!-- ==================== 9. 对话记账助手（说一句话自动记账） ==================== -->
+    <!-- 悬浮唤起按钮 -->
+    <button x-show="!showChatModal"
+            @click="openChat()"
+            class="fixed right-4 bottom-6 z-40 bg-black text-neon w-14 h-14 rounded-full shadow-lift flex items-center justify-center text-2xl active:scale-95 transition-transform cursor-pointer border border-zinc-800"
+            title="说一句，自动记账">
+        <span x-show="!chatListening">💬</span>
+        <span x-show="chatListening" class="chat-pulse">🎙️</span>
+    </button>
+
+    <!-- 账号与云同步面板 -->
+    <div x-show="showAccountModal"
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center"
+         style="display: none;">
+        <div @click.outside="showAccountModal = false"
+             class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-lift border border-black/5 modal-animate overflow-hidden">
+            <header class="px-4 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-2xl bg-black text-neon flex items-center justify-center text-lg">🔐</div>
+                    <div>
+                        <h2 class="text-sm font-black text-zinc-900">账号与云同步</h2>
+                        <p class="text-[10px] text-zinc-400 font-bold">两台手机共用一本账</p>
+                    </div>
+                </div>
+                <button @click="showAccountModal = false" class="text-zinc-400 hover:text-black font-bold text-sm p-2 cursor-pointer">✕</button>
+            </header>
+
+            <div class="p-4 space-y-3" style="padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);">
+                <!-- 未登录 -->
+                <template x-if="!authToken">
+                    <div class="space-y-3">
+                        <p class="text-[11px] font-bold text-zinc-500 leading-relaxed">用手机号登录后，账本会自动存到云端，换手机 / 两台手机都能接着记。</p>
+                        <div>
+                            <label class="text-[10px] font-black text-zinc-400">手机号</label>
+                            <input type="tel" inputmode="numeric" maxlength="11" x-model="loginPhone" placeholder="请输入手机号"
+                                   class="mt-1 w-full bg-cream-100 border border-black/10 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-black text-zinc-400">验证码</label>
+                            <div class="mt-1 flex items-center space-x-2">
+                                <input type="tel" inputmode="numeric" maxlength="6" x-model="loginCode" placeholder="6 位验证码"
+                                       class="flex-1 min-w-0 bg-cream-100 border border-black/10 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                                <button type="button" @click="sendSmsCode()"
+                                        :disabled="sendingSms || smsCountdown > 0"
+                                        :class="(sendingSms || smsCountdown > 0) ? 'bg-zinc-200 text-zinc-400' : 'bg-black text-neon active:scale-95'"
+                                        class="shrink-0 px-3.5 py-2.5 rounded-xl text-[11px] font-black transition cursor-pointer"
+                                        x-text="sendingSms ? '发送中…' : (smsCountdown > 0 ? (smsCountdown + 's 后重发') : '获取验证码')"></button>
+                            </div>
+                        </div>
+                        <p x-show="loginError" x-text="loginError" class="text-[11px] font-bold text-rose-500"></p>
+                        <button type="button" @click="doLogin()"
+                                :disabled="loggingIn"
+                                :class="loggingIn ? 'bg-zinc-300 text-zinc-500' : 'bg-black text-neon active:scale-[0.98]'"
+                                class="w-full py-3 rounded-2xl text-sm font-black transition cursor-pointer"
+                                x-text="loggingIn ? '登录中…' : '登录 / 自动注册'"></button>
+                        <button type="button" @click="showAccountModal = false"
+                                class="w-full py-2 text-[11px] font-bold text-zinc-400 cursor-pointer">先不登录，只在本地用</button>
+                    </div>
+                </template>
+
+                <!-- 已登录 -->
+                <template x-if="authToken">
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between bg-cream-100 rounded-2xl px-3.5 py-3">
+                            <div>
+                                <div class="text-sm font-black text-zinc-900" x-text="authUser ? (authUser.nickname || '已登录') : '已登录'"></div>
+                                <div class="text-[11px] font-bold text-zinc-400" x-text="authUser ? authUser.phone : ''"></div>
+                            </div>
+                            <span class="text-[10px] font-black px-2.5 py-1 rounded-full" :class="syncBadgeClass()" x-text="syncStateText()"></span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" @click="syncNow()" class="py-2.5 rounded-xl bg-black text-neon text-[11px] font-black active:scale-95 transition cursor-pointer">立即同步</button>
+                            <button type="button" @click="doLogout()" class="py-2.5 rounded-xl bg-cream-100 text-zinc-500 text-[11px] font-black active:scale-95 transition cursor-pointer">退出登录</button>
+                        </div>
+                        <p class="text-[10px] font-bold text-zinc-400 leading-relaxed">登录状态会自动续期，不用经常重新登录。退出后本机账本仍保留，但停止云同步。</p>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- 对话面板 -->
+    <div x-show="showChatModal"
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center"
+         style="display: none;">
+        <div @click.outside="closeChat()"
+             class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-lift border border-black/5 modal-animate flex flex-col overflow-hidden h-[82vh] sm:h-[640px]">
+
+            <!-- 头部 -->
+            <header class="px-4 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-2xl bg-black text-neon flex items-center justify-center text-lg">🤖</div>
+                    <div>
+                        <h2 class="text-sm font-black text-zinc-900">对话记账</h2>
+                        <p class="text-[10px] text-zinc-400 font-bold">说一句话，自动记到对应荷包</p>
+                    </div>
+                </div>
+                <button @click="closeChat()" class="text-zinc-400 hover:text-black font-bold text-sm p-2 cursor-pointer">✕</button>
+            </header>
+
+            <!-- 消息区 -->
+            <div class="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 bg-cream-50" x-ref="chatBody">
+                <template x-for="(m, i) in chatMessages" :key="i">
+                    <div :class="m.role === 'user' ? 'flex justify-end' : 'flex justify-start'" class="chat-bubble-in">
+                        <div :class="m.role === 'user'
+                                        ? 'bg-black text-white rounded-2xl rounded-br-md'
+                                        : 'bg-white border border-black/5 text-zinc-800 rounded-2xl rounded-bl-md'"
+                             class="max-w-[85%] px-3.5 py-2.5 text-xs font-bold leading-relaxed shadow-soft whitespace-pre-line">
+                            <span x-text="m.text"></span>
+                            <template x-if="m.undo">
+                                <button @click="undoLastChatTx(m.txId)" class="block mt-1.5 text-[10px] font-black text-rose-500 underline cursor-pointer">撤销这笔</button>
+                            </template>
+                            <template x-if="m.undoBatch">
+                                <button @click="undoChatBatch(m.txIds)" class="block mt-1.5 text-[10px] font-black text-rose-500 underline cursor-pointer">撤销这几笔</button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- 待确认卡片 -->
+                <template x-if="chatDraft">
+                    <div class="bg-white border-2 border-black rounded-2xl p-3.5 shadow-soft space-y-2.5 chat-bubble-in">
+                        <template x-if="chatDraftQueue.length">
+                            <div class="flex items-center justify-between bg-cream-100 rounded-xl px-2.5 py-1.5">
+                                <span class="text-[10px] font-extrabold text-zinc-500" x-text="'还有 ' + chatDraftQueue.length + ' 笔待确认'"></span>
+                                <button type="button" @click="confirmAllChatDrafts()"
+                                        class="text-[10px] font-black text-white bg-black px-2.5 py-1 rounded-full cursor-pointer">全部入账</button>
+                            </div>
+                        </template>
+                        <div class="flex items-center justify-between">
+                            <div class="grid grid-cols-2 gap-1 bg-cream-100 p-1 rounded-xl w-36">
+                                <button type="button" @click="setChatDraftType('EXPENSE')"
+                                        :class="chatDraft.type === 'EXPENSE' ? 'bg-black text-white' : 'text-zinc-500'"
+                                        class="py-1.5 text-[11px] font-extrabold rounded-lg transition cursor-pointer">支出</button>
+                                <button type="button" @click="setChatDraftType('INCOME')"
+                                        :class="chatDraft.type === 'INCOME' ? 'bg-black text-white' : 'text-zinc-500'"
+                                        class="py-1.5 text-[11px] font-extrabold rounded-lg transition cursor-pointer">收入</button>
+                            </div>
+                            <span class="text-[10px] font-bold text-zinc-400 text-right max-w-[45%]" x-text="chatDraft.note || ''"></span>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xl font-black text-zinc-300">¥</span>
+                            <input type="number" step="0.01" min="0" x-model="chatDraft.amount" placeholder="0.00"
+                                   class="chat-input flex-1 bg-cream-100 border border-black/10 rounded-xl px-3 py-2 text-xl font-black focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <select x-model="chatDraft.pocketId" x-ref="chatPocketSelect" @change="chatDraft.note = chatDraft.pocketId ? getPocketName(chatDraft.pocketId) : (chatDraft.type === 'EXPENSE' ? '请选择分类' : '通用存款池')" class="bg-cream-100 border border-black/10 rounded-xl px-2.5 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                                <option value="" x-text="chatDraft.type === 'EXPENSE' ? '请选择分类' : '通用存款池'"></option>
+                                <optgroup label="小荷包">
+                                    <template x-for="p in pockets" :key="p.id">
+                                        <option :value="p.id" x-text="`${p.icon} ${p.name}`"></option>
+                                    </template>
+                                </optgroup>
+                                <optgroup label="收入项目">
+                                    <template x-for="inc in currentMonthIncomeSources" :key="inc.id">
+                                        <option :value="inc.id" x-text="`${inc.icon} ${inc.name}`"></option>
+                                    </template>
+                                </optgroup>
+                                <optgroup label="小金库">
+                                    <template x-for="v in vaults" :key="v.id">
+                                        <option :value="v.id" x-text="`${v.icon} ${v.name}`"></option>
+                                    </template>
+                                </optgroup>
+                            </select>
+                            <input type="date" x-model="chatDraft.date"
+                                   class="bg-cream-100 border border-black/10 rounded-xl px-2.5 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+
+                        <input type="text" x-model="chatDraft.remark" maxlength="20" placeholder="备注（如：午饭）"
+                               class="w-full bg-cream-100 border border-black/10 rounded-xl px-3 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+
+                        <div class="flex justify-end items-center space-x-2 pt-0.5">
+                            <button type="button" @click="aiReparseDraft()" x-show="authToken"
+                                    class="mr-auto px-3 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">🤖 AI 重解析</button>
+                            <button type="button" @click="chatDraft = null; chatDraftQueue = []"
+                                    class="px-4 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                            <button type="button" @click="confirmChatDraft()"
+                                    class="bg-black text-neon hover:bg-zinc-800 px-5 py-2 rounded-full font-bold text-[11px] shadow-md transition cursor-pointer">确认入账</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- 输入区 -->
+            <div class="border-t border-black/5 bg-white px-3 pt-2.5 space-y-2" style="padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);">
+                <div class="flex space-x-1.5 overflow-x-auto pb-0.5">
+                    <template x-for="q in chatQuickPhrases" :key="q">
+                        <button type="button" @click="sendChatMessage(q)"
+                                class="shrink-0 bg-cream-100 hover:bg-cream-200 text-zinc-600 text-[10px] font-extrabold px-3 py-1.5 rounded-full transition cursor-pointer"
+                                x-text="q"></button>
+                    </template>
+                </div>
+
+                <form @submit.prevent="sendChatMessage()" class="flex items-center space-x-2">
+                    <button type="button" @click="toggleVoice()"
+                            :class="chatListening ? 'bg-rose-500 text-white chat-pulse' : 'bg-cream-100 text-zinc-700'"
+                            class="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center text-lg transition cursor-pointer"
+                            title="按住/点击说话">🎙️</button>
+                    <input type="text" x-model="chatInput" x-ref="chatInput" enterkeyhint="send"
+                           placeholder="比如：昨天收入500，花了30买零食"
+                           class="flex-1 min-w-0 bg-cream-100 border border-black/10 rounded-2xl px-4 py-3 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    <button type="submit"
+                            class="w-11 h-11 shrink-0 rounded-2xl bg-black text-neon font-black text-lg flex items-center justify-center active:scale-95 transition cursor-pointer">↑</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== Alpine.js 核心代码数据逻辑层 ==================== -->
+    <!-- 轻提示 -->
+    <div x-show="syncToast" x-transition.opacity
+         class="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] bg-black/90 text-white text-[11px] font-bold px-4 py-2.5 rounded-full shadow-lift whitespace-nowrap"
+         style="display: none;" x-text="syncToast"></div>
+
     <script>
         function pocketApp() {
             return {
@@ -843,6 +1089,58 @@
                 filterPocket: 'ALL',
                 filterType: 'ALL',
 
+                // 对话记账助手状态
+                showChatModal: false,
+                chatMessages: [],
+                chatDraft: null,
+                chatInput: '',
+                chatListening: false,
+                chatRecognition: null,
+                chatPendingText: '',
+                chatLastTxId: null,
+                chatDraftQueue: [],      // 一句话里识别出的后续账目，逐笔确认
+                chatQuickPhrases: ['昨天奶茶12', '午饭花了28', '打车15', '收到工资8000', '昨天收入500，花了30买零食'],
+
+                // 账号 / 云同步 / 自主学习
+                apiBase: 'https://demo.qiuli55.top/pocket-api',
+                authToken: '',
+                authUser: null,
+                showAccountModal: false,
+                loginPhone: '',
+                loginCode: '',
+                loginError: '',
+                sendingSms: false,
+                loggingIn: false,
+                smsCountdown: 0,
+                smsTimer: null,
+                deviceId: '',
+                syncRev: 0,
+                syncState: 'local',
+                syncDirty: false,
+                syncBusy: false,
+                syncTimer: null,
+                syncToast: '',
+                toastTimer: null,
+                applyingRemote: false,
+                learnProfile: { vocab: {}, type: {}, events: 0 },
+                aiBusy: false,
+
+                // 记账分类关键词：用于把一句话落到对应的小荷包（尽量覆盖大白话）
+                pocketKeywordDict: {
+                    '餐饮': ['餐', '吃饭', '吃了', '早饭', '早餐', '早点', '午饭', '中饭', '午餐', '晚饭', '晚餐', '夜宵', '宵夜', '外卖', '奶茶', '咖啡', '饮料', '可乐', '雪碧', '啤酒', '零食', '小吃', '水果', '火锅', '烧烤', '串串', '麻辣烫', '炸鸡', '汉堡', '披萨', '面包', '蛋糕', '甜点', '甜品', '冰淇淋', '冰激凌', '雪糕', '牛奶', '酸奶', '豆浆', '包子', '饺子', '面条', '拉面', '米粉', '螺蛳粉', '粥', '米饭', '食堂', '聚餐', '请吃饭', '下馆子', '买菜', '买菜做饭', '菜市场', '菜', '鸡蛋', '泡面', '喝水', '矿泉水', '茶叶', '巧克力', '饼干', '三明治', '盒饭', '快餐', '盖饭', '米线', '酸辣粉', '卤味', '关东煮', '烤肠', '鸡排', '寿司', '自助餐', '星巴克', '瑞幸', '麦当劳', '肯德基', '必胜客', '德克士', '华莱士', '喜茶', '奈雪', '蜜雪冰城', '沙县', '海底捞', '早点摊'],
+                    '交通': ['打车', '打的', '滴滴', '出租车', '网约车', '顺风车', '地铁', '公交', '大巴', '高铁', '火车', '动车', '机票', '飞机', '车票', '船票', '加油', '油费', '停车', '停车费', '单车', '共享单车', '骑车', '过路费', '高速费', '洗车', '保养', '修车', '年检', '驾照', '罚款', '代驾'],
+                    '购物': ['衣服', '外套', '裤子', '裙子', '鞋', '鞋子', '帽子', '包包', '个包', '买包', '背包', '双肩包', '化妆品', '护肤', '面膜', '口红', '香水', '淘宝', '京东', '拼多多', '数码', '手机', '电脑', '耳机', '充电器', '键盘', '首饰', '手表', '眼镜', '家电', '家具', '被子', '床单', '购物', '快递', '买衣服', '换季', '东西', '花呗', '信用卡', '还款', '白条', '分期'],
+                    '日用': ['日用', '超市', '纸巾', '抽纸', '洗发水', '沐浴露', '牙膏', '牙刷', '洗衣液', '洗衣粉', '清洁', '垃圾袋', '毛巾', '拖鞋', '收纳', '电池', '灯泡', '锅', '碗', '筷子', '卫生巾', '雨伞', '水杯'],
+                    '住房': ['房租', '租金', '租房', '水费', '电费', '水电', '水电气', '物业', '物业费', '燃气', '燃气费', '取暖', '暖气', '宽带', '网费', '维修', '装修', '房贷', '中介费', '押金'],
+                    '娱乐': ['电影', '电影票', '游戏', '充值', '唱歌', 'ktv', '演出', '门票', '旅游', '爬山', '露营', '健身', '健身房', '游泳', '滑雪', '视频会员', '会员', '演唱会', '剧本杀', '密室', '桌游', '酒吧', '网吧', '球票', '看电影'],
+                    '医疗': ['医院', '看病', '买药', '药店', '药', '挂号', '体检', '牙医', '看牙', '门诊', '诊所', '打针', '挂水', '口罩', '维生素', '保健品', '医保'],
+                    '通讯': ['话费', '流量', '电话费', '手机费', '充话费', '手机充值', '话费充值', '充值话费', '宽带费'],
+                    '学习': ['买书', '书', '课程', '学费', '培训', '考试', '报名费', '文具', '资料', '网课', '电子书', '打印', '复印', '课', '报班', '培训班', '辅导班', '家教', '上课', '学车', '练车', '驾校'],
+                    '宠物': ['猫粮', '狗粮', '宠物', '铲屎', '驱虫', '疫苗', '猫砂', '猫', '狗', '宠物医院', '洗澡'],
+                    '人情': ['红包', '礼物', '请客', '份子', '份子钱', '随礼', '礼金', '送礼', '生日', '结婚', '满月', '探望', '孝敬', '给妈', '给爸', '给家里', '给对象', '给男朋友', '给女朋友', '转账给', '借给', '借钱给', '借出', '给妈妈', '给爸爸', '给爸妈', '给朋友'],
+                    '美容': ['理发', '美发', '美甲', '美容', '剪头', '剪头发', '烫头', '染发', '洗头', '剃头', '指甲', '美睫', '种睫毛', '纹眉', '洗脸']
+                },
+
                 incomeSourceForm: { id: null, category: 'MAIN', name: '', amount: '', icon: '💼' },
                 allocateForm: { pocketId: '', amount: '' },
                 pocketForm: { id: null, name: '', budget: '', icon: '👛', desc: '', color: '#FFF1E6', type: 'BUDGET' },
@@ -863,6 +1161,19 @@
                     if (savedIncomes) { try { this.incomeSources = JSON.parse(savedIncomes); } catch(e){} }
                     if (savedBudgets) { try { this.monthlyBudgets = JSON.parse(savedBudgets); } catch(e){} }
                     if (savedVaults) { try { this.vaults = JSON.parse(savedVaults); } catch(e){} }
+
+                    // 账号与同步状态
+                    this.authToken = localStorage.getItem('pocket_auth_token') || '';
+                    this.deviceId = localStorage.getItem('pocket_device_id') || ('dev_' + Math.random().toString(36).slice(2, 10));
+                    localStorage.setItem('pocket_device_id', this.deviceId);
+                    this.syncRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) this.autoPull();
+                    });
+                    window.addEventListener('online', () => {
+                        if (this.syncDirty) this.pushLedger();
+                    });
+                    this.bootAccount();
                 },
 
                 saveStorage() {
@@ -872,6 +1183,473 @@
                     localStorage.setItem('pocket_v5_incomes', JSON.stringify(this.incomeSources));
                     localStorage.setItem('pocket_v5_monthly_budgets', JSON.stringify(this.monthlyBudgets));
                     localStorage.setItem('pocket_v5_vaults_list', JSON.stringify(this.vaults));
+                    this.markDirty();
+                },
+
+                // ==================== 账号 / 云同步 ====================
+                openAccount() {
+                    this.loginError = '';
+                    this.showAccountModal = true;
+                },
+
+                saveAuthToken(token) {
+                    if (!token) return;
+                    this.authToken = token;
+                    localStorage.setItem('pocket_auth_token', token);
+                },
+
+                clearAuth() {
+                    this.authToken = '';
+                    this.authUser = null;
+                    this.syncState = 'local';
+                    this.syncDirty = false;
+                    this.learnProfile = { vocab: {}, type: {}, events: 0 };
+                    localStorage.removeItem('pocket_auth_token');
+                    localStorage.removeItem('pocket_sync_rev');
+                },
+
+                syncDotClass() {
+                    return {
+                        synced: 'bg-emerald-500',
+                        syncing: 'bg-amber-400',
+                        error: 'bg-rose-500',
+                        local: 'bg-zinc-300'
+                    }[this.syncState] || 'bg-zinc-300';
+                },
+
+                syncBadgeClass() {
+                    return {
+                        synced: 'bg-emerald-100 text-emerald-700',
+                        syncing: 'bg-amber-100 text-amber-700',
+                        error: 'bg-rose-100 text-rose-600',
+                        local: 'bg-zinc-200 text-zinc-500'
+                    }[this.syncState] || 'bg-zinc-200 text-zinc-500';
+                },
+
+                syncStateText() {
+                    return {
+                        synced: '已同步',
+                        syncing: '同步中',
+                        error: '同步失败',
+                        local: '本地模式'
+                    }[this.syncState] || '本地模式';
+                },
+
+                toast(text) {
+                    this.syncToast = text;
+                    clearTimeout(this.toastTimer);
+                    this.toastTimer = setTimeout(() => { this.syncToast = ''; }, 2600);
+                },
+
+                async apiFetch(path, options) {
+                    const opts = Object.assign({}, options || {});
+                    const headers = Object.assign({}, opts.headers || {});
+                    if (opts.body && typeof opts.body !== 'string') {
+                        headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(opts.body);
+                    }
+                    if (this.authToken) headers['Authorization'] = 'Bearer ' + this.authToken;
+                    opts.headers = headers;
+                    const res = await fetch(this.apiBase + path, opts);
+                    // 服务端在临近过期时下发新 token，自动续期
+                    const fresh = res.headers.get('X-Pocket-Token');
+                    if (fresh) this.saveAuthToken(fresh);
+                    let data = null;
+                    try { data = await res.json(); } catch (e) {}
+                    if (!res.ok) {
+                        const err = new Error((data && (data.detail || data.error)) || ('网络错误 ' + res.status));
+                        err.status = res.status;
+                        err.data = data;
+                        throw err;
+                    }
+                    return data;
+                },
+
+                async sendSmsCode() {
+                    if (this.sendingSms || this.smsCountdown > 0) return;
+                    const phone = (this.loginPhone || '').replace(/\s+/g, '');
+                    if (!/^1[3-9]\d{9}$/.test(phone)) { this.loginError = '请输入正确的手机号'; return; }
+                    this.sendingSms = true;
+                    this.loginError = '';
+                    try {
+                        await this.apiFetch('/auth/sms/send', { method: 'POST', body: { phone } });
+                        this.smsCountdown = 60;
+                        clearInterval(this.smsTimer);
+                        this.smsTimer = setInterval(() => {
+                            this.smsCountdown -= 1;
+                            if (this.smsCountdown <= 0) clearInterval(this.smsTimer);
+                        }, 1000);
+                    } catch (e) {
+                        this.loginError = e.message || '验证码发送失败';
+                    } finally {
+                        this.sendingSms = false;
+                    }
+                },
+
+                async doLogin() {
+                    const phone = (this.loginPhone || '').replace(/\s+/g, '');
+                    const code = (this.loginCode || '').replace(/\s+/g, '');
+                    if (!/^1[3-9]\d{9}$/.test(phone)) { this.loginError = '请输入正确的手机号'; return; }
+                    if (!/^\d{4,8}$/.test(code)) { this.loginError = '请输入验证码'; return; }
+                    this.loggingIn = true;
+                    this.loginError = '';
+                    try {
+                        const res = await this.apiFetch('/auth/sms/login', { method: 'POST', body: { phone, code } });
+                        this.saveAuthToken(res.token);
+                        this.authUser = res.user;
+                        this.loginCode = '';
+                        this.showAccountModal = false;
+                        localStorage.removeItem('pocket_sync_rev');
+                        this.syncRev = 0;
+                        await this.bootAccount(true);
+                        this.toast('登录成功，已开启云同步');
+                    } catch (e) {
+                        this.loginError = e.message || '登录失败';
+                    } finally {
+                        this.loggingIn = false;
+                    }
+                },
+
+                doLogout() {
+                    if (!window.confirm('退出后本机账本仍保留，但会停止云同步。确定退出？')) return;
+                    this.clearAuth();
+                    this.showAccountModal = false;
+                    this.toast('已退出登录，当前为本地模式');
+                },
+
+                ledgerSnapshot() {
+                    return {
+                        version: 5,
+                        pockets: this.pockets,
+                        transactions: this.transactions,
+                        baseSavings: Number(this.baseSavings) || 0,
+                        incomeSources: this.incomeSources,
+                        monthlyBudgets: this.monthlyBudgets,
+                        vaults: this.vaults,
+                        savedAt: new Date().toISOString()
+                    };
+                },
+
+                applyLedgerData(data) {
+                    if (!data) return false;
+                    this.applyingRemote = true;
+                    if (Array.isArray(data.pockets)) this.pockets = data.pockets;
+                    if (Array.isArray(data.transactions)) this.transactions = data.transactions;
+                    if (data.baseSavings !== undefined) this.baseSavings = Number(data.baseSavings) || 0;
+                    if (Array.isArray(data.incomeSources)) this.incomeSources = data.incomeSources;
+                    if (data.monthlyBudgets && typeof data.monthlyBudgets === 'object') this.monthlyBudgets = data.monthlyBudgets;
+                    if (Array.isArray(data.vaults)) this.vaults = data.vaults;
+                    this.saveStorage();
+                    this.applyingRemote = false;
+                    return true;
+                },
+
+                mergeLedgers(server, local) {
+                    const mergeArr = (a, b) => {
+                        const m = new Map();
+                        (a || []).forEach(x => { if (x && x.id) m.set(x.id, x); });
+                        (b || []).forEach(x => { if (x && x.id && !m.has(x.id)) m.set(x.id, x); });
+                        return Array.from(m.values());
+                    };
+                    return {
+                        version: 5,
+                        pockets: mergeArr(server.pockets, local.pockets),
+                        transactions: mergeArr(server.transactions, local.transactions),
+                        baseSavings: Number(server.baseSavings !== undefined ? server.baseSavings : local.baseSavings) || 0,
+                        incomeSources: mergeArr(server.incomeSources, local.incomeSources),
+                        monthlyBudgets: Object.assign({}, server.monthlyBudgets || {}, local.monthlyBudgets || {}),
+                        vaults: mergeArr(server.vaults, local.vaults),
+                        savedAt: new Date().toISOString()
+                    };
+                },
+
+                async bootAccount(fromLogin) {
+                    if (!this.authToken) { this.syncState = 'local'; return; }
+                    this.syncState = 'syncing';
+                    try {
+                        const me = await this.apiFetch('/me');
+                        this.authUser = me.user;
+                        await this.loadLearnProfile();
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (!res.data) {
+                            // 云端还没有账本：把本机账本推上去
+                            this.syncRev = 0;
+                            this.syncDirty = true;
+                            await this.pushLedger();
+                            return;
+                        }
+                        if (!storedRev || fromLogin) {
+                            if (this.transactions.length > 0 && !storedRev) {
+                                // 本机已有账本但从未同步：合并后上云，避免覆盖任何一边
+                                const merged = this.mergeLedgers(res.data, this.ledgerSnapshot());
+                                this.syncRev = Number(res.rev || 0);
+                                localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                                this.applyLedgerData(merged);
+                                this.syncDirty = true;
+                                await this.pushLedger();
+                                this.toast('已合并本机账本与云端账本');
+                            } else {
+                                // 新设备首次登录：采用云端账本
+                                this.syncRev = Number(res.rev || 0);
+                                localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                                this.applyLedgerData(res.data);
+                                this.syncState = 'synced';
+                            }
+                            return;
+                        }
+                        if (Number(res.rev || 0) !== storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                            this.toast('已拉取另一台设备的最新账本');
+                        }
+                        this.syncState = 'synced';
+                    } catch (e) {
+                        if (e.status === 401) {
+                            this.clearAuth();
+                            this.toast('登录已过期，请重新登录');
+                        } else {
+                            this.syncState = 'error';
+                        }
+                    }
+                },
+
+                markDirty() {
+                    if (!this.authToken || this.applyingRemote) return;
+                    this.syncDirty = true;
+                    this.schedulePush();
+                },
+
+                schedulePush() {
+                    clearTimeout(this.syncTimer);
+                    this.syncTimer = setTimeout(() => this.pushLedger(), 900);
+                },
+
+                async pushLedger() {
+                    if (!this.authToken) return;
+                    if (this.syncBusy) { this.syncDirty = true; return; }
+                    this.syncBusy = true;
+                    this.syncState = 'syncing';
+                    try {
+                        const res = await this.apiFetch('/ledger', {
+                            method: 'PUT',
+                            body: { data: this.ledgerSnapshot(), baseRev: this.syncRev, device: this.deviceId }
+                        });
+                        this.syncRev = Number(res.rev || this.syncRev);
+                        this.syncDirty = false;
+                        this.syncState = 'synced';
+                        localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                    } catch (e) {
+                        if (e.status === 409 && e.data && e.data.server) {
+                            // 另一台设备先写了：以云端为准，避免互相覆盖
+                            const server = e.data.server;
+                            this.syncRev = Number(server.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            if (server.data) this.applyLedgerData(server.data);
+                            this.syncDirty = false;
+                            this.syncState = 'synced';
+                            this.toast('已同步另一台设备的最新账本');
+                        } else if (e.status === 401) {
+                            this.clearAuth();
+                            this.toast('登录已过期，请重新登录');
+                        } else {
+                            this.syncState = 'error';
+                        }
+                    } finally {
+                        this.syncBusy = false;
+                        if (this.syncDirty && this.authToken) this.schedulePush();
+                    }
+                },
+
+                async syncNow() {
+                    if (!this.authToken) return;
+                    if (this.syncDirty) { await this.pushLedger(); return; }
+                    this.syncState = 'syncing';
+                    try {
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (res && res.data && Number(res.rev || 0) !== storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                        }
+                        this.syncState = 'synced';
+                        this.toast('账本已是最新');
+                    } catch (e) {
+                        this.syncState = 'error';
+                        this.toast('同步失败，请检查网络');
+                    }
+                },
+
+                async autoPull() {
+                    if (!this.authToken || this.syncBusy || this.syncDirty) return;
+                    try {
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (res && res.data && Number(res.rev || 0) > storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                            this.toast('已同步另一台设备的最新账本');
+                        }
+                        this.syncState = 'synced';
+                    } catch (e) {
+                        if (e.status === 401) this.clearAuth();
+                    }
+                },
+
+                // ==================== 自主学习 ====================
+                async loadLearnProfile() {
+                    try {
+                        const res = await this.apiFetch('/learn/profile');
+                        if (res && res.profile) {
+                            this.learnProfile = Object.assign({ vocab: {}, type: {}, events: 0 }, res.profile);
+                        }
+                    } catch (e) {}
+                },
+
+                resolveTargetId(name, type) {
+                    const n = (name || '').trim();
+                    if (!n) return '';
+                    const inc = this.currentMonthIncomeSources.find(s => s.name === n) || this.incomeSources.find(s => s.name === n);
+                    if (type === 'INCOME' && inc) return inc.id;
+                    const p = this.pockets.find(x => x.name === n) || this.pockets.find(x => x.name && (x.name.includes(n) || n.includes(x.name)));
+                    if (p) return p.id;
+                    const v = this.vaults.find(x => x.name === n);
+                    if (v) return v.id;
+                    return inc ? inc.id : '';
+                },
+
+                learnedType(text) {
+                    const map = (this.learnProfile && this.learnProfile.type) || {};
+                    const key = (text || '').replace(/\s+/g, '');
+                    if (!key) return null;
+                    if (map[key] === 'INCOME' || map[key] === 'EXPENSE') return map[key];
+                    let best = null, len = 0;
+                    for (const k of Object.keys(map)) {
+                        if (k.length >= 4 && key.includes(k) && k.length > len) {
+                            best = map[k];
+                            len = k.length;
+                        }
+                    }
+                    return (best === 'INCOME' || best === 'EXPENSE') ? best : null;
+                },
+
+                learnedTarget(text, type) {
+                    const vocab = (this.learnProfile && this.learnProfile.vocab) || {};
+                    const t = (text || '').toLowerCase();
+                    let hit = null, len = 0;
+                    for (const token of Object.keys(vocab)) {
+                        if (!token || token.length < 2) continue;
+                        if (t.includes(token.toLowerCase()) && token.length > len) {
+                            hit = { token, target: vocab[token] };
+                            len = token.length;
+                        }
+                    }
+                    if (!hit) return null;
+                    const id = this.resolveTargetId(hit.target, type);
+                    if (!id) return null;
+                    return { pocketId: id, note: `按你的习惯记到「${this.getPocketName(id)}」` };
+                },
+
+                learnLocally(raw, corrected) {
+                    if (!corrected) return;
+                    const target = (corrected.target || '').trim();
+                    const note = (corrected.note || '').trim();
+                    if (target && note && note.length >= 2) {
+                        const tokens = [note, note.slice(0, 2), note.slice(0, 3)].filter(x => x.length >= 2);
+                        for (const token of tokens) this.learnProfile.vocab[token] = target;
+                    }
+                    if ((corrected.type === 'INCOME' || corrected.type === 'EXPENSE') && raw) {
+                        const token = raw.replace(/\s+/g, '').slice(0, 24);
+                        if (token.length >= 2) this.learnProfile.type[token] = corrected.type;
+                    }
+                },
+
+                trackCorrection(d) {
+                    if (!this.authToken || !d || !d.origin) return;
+                    const o = d.origin;
+                    const changed = o.type !== d.type
+                        || String(o.pocketId || '') !== String(d.pocketId || '')
+                        || Number(o.amount || 0) !== Number(d.amount || 0);
+                    if (!changed) return;
+                    const corrected = {
+                        type: d.type,
+                        amount: Number(d.amount) || 0,
+                        target: d.pocketId ? this.getPocketName(d.pocketId) : '',
+                        note: d.remark || ''
+                    };
+                    this.learnLocally(d.text || '', corrected);
+                    this.apiFetch('/learn/correct', {
+                        method: 'POST',
+                        body: { raw: d.text || '', original: o, corrected, source: 'confirm' }
+                    }).then(() => this.loadLearnProfile()).catch(() => {});
+                },
+
+                // ==================== AI 兜底解析 ====================
+                aiPockets() {
+                    const list = [];
+                    this.pockets.forEach(p => list.push({ name: p.name, type: 'EXPENSE' }));
+                    this.currentMonthIncomeSources.forEach(s => list.push({ name: s.name, type: 'INCOME' }));
+                    return list;
+                },
+
+                draftFromAi(item, text) {
+                    const type = item.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+                    const target = (item.target || '').trim();
+                    const pocketId = this.resolveTargetId(target, type);
+                    const d = {
+                        type,
+                        amount: Number(item.amount) || 0,
+                        pocketId,
+                        date: item.date || this.todayStr(),
+                        remark: (item.note || '').slice(0, 20),
+                        note: target ? `AI 归类「${target}」` : 'AI 已解析',
+                        text: text || ''
+                    };
+                    d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    return d;
+                },
+
+                removeChatMessage(msg) {
+                    if (!msg) return;
+                    const i = this.chatMessages.indexOf(msg);
+                    if (i >= 0) this.chatMessages.splice(i, 1);
+                },
+
+                async tryAiParse(text, quiet) {
+                    if (!this.authToken || this.aiBusy) return false;
+                    this.aiBusy = true;
+                    const tip = quiet ? null : this.pushChat('bot', '🤖 AI 正在理解…', { typing: true });
+                    try {
+                        const res = await this.apiFetch('/parse', {
+                            method: 'POST',
+                            body: { text: text || '', today: this.todayStr(), pockets: this.aiPockets() }
+                        });
+                        const drafts = ((res && res.items) || [])
+                            .map(it => this.draftFromAi(it, text))
+                            .filter(d => d.amount > 0);
+                        this.removeChatMessage(tip);
+                        if (!drafts.length) return false;
+                        this.applyDrafts(drafts, text);
+                        return true;
+                    } catch (e) {
+                        this.removeChatMessage(tip);
+                        if (!quiet) this.pushChat('bot', 'AI 暂时没连上，先用本地理解～');
+                        return false;
+                    } finally {
+                        this.aiBusy = false;
+                    }
+                },
+
+                async aiReparseDraft() {
+                    const d = this.chatDraft;
+                    if (!d) return;
+                    if (!this.authToken) { this.pushChat('bot', '登录后才能用 AI 重解析哦～'); return; }
+                    if (!d.text) { this.pushChat('bot', '这句话没有原文，手动改一下就好～'); return; }
+                    const ok = await this.tryAiParse(d.text);
+                    if (!ok) this.pushChat('bot', 'AI 也没太听明白，手动选一下分类就好～');
                 },
 
                 formatMonthTitle(ym) {
@@ -972,7 +1750,7 @@
                             type: 'INCOME',
                             amount: enteredAmount,
                             pocketId: targetId,
-                            date: new Date().toISOString().split('T')[0],
+                            date: this.todayStr(),
                             remark: '项目初始设定入账'
                         });
                     }
@@ -1287,7 +2065,7 @@
                         type: 'EXPENSE',
                         amount: '',
                         pocketId: pocketId || '',
-                        date: new Date().toISOString().split('T')[0],
+                        date: this.todayStr(),
                         remark: ''
                     };
                     this.showTransactionModal = true;
@@ -1315,11 +2093,901 @@
                     }
                 },
 
+                // ==================== 对话记账：中文语义解析 ====================
+                pad2(n) {
+                    return n < 10 ? '0' + n : '' + n;
+                },
+
+                todayStr() {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${this.pad2(d.getMonth() + 1)}-${this.pad2(d.getDate())}`;
+                },
+
+                dateToStr(d) {
+                    return `${d.getFullYear()}-${this.pad2(d.getMonth() + 1)}-${this.pad2(d.getDate())}`;
+                },
+
+                normalizeText(raw) {
+                    let t = (raw || '').toString();
+                    // 全角数字/符号转半角
+                    t = t.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248));
+                    t = t.replace(/．/g, '.').replace(/，/g, ',').replace(/[：]/g, ':').replace(/[！]/g, '!');
+                    // 语音识别 / 手滑的常见同音错字（只在不会误伤正常词的前提下纠正）
+                    t = t.replace(/(\d)\s*快(?![递点])/g, '$1块');
+                    t = t.replace(/公资|工姿|攻资/g, '工资');
+                    t = t.replace(/乃茶|奶荼|奶查/g, '奶茶');
+                    t = t.replace(/打滴|打迪|大滴/g, '打车');
+                    t = t.replace(/外买|外麦/g, '外卖');
+                    t = t.replace(/零时|临食/g, '零食');
+                    t = t.replace(/房主|房组/g, '房租');
+                    t = t.replace(/盒饭|合饭/g, '盒饭');
+                    t = t.replace(/画费|话非|华费|化费/g, '话费');
+                    t = t.replace(/外迈|外麦|外买/g, '外卖');
+                    t = t.replace(/打滴|打迪|大滴/g, '打车');
+                    // 口语说法：昨儿/今儿/前儿……
+                    t = t.replace(/大前儿个?|大前个/g, '大前天');
+                    t = t.replace(/昨儿个?|昨个/g, '昨天');
+                    t = t.replace(/今儿个?|今个/g, '今天');
+                    t = t.replace(/前儿个?|前个/g, '前天');
+                    t = t.replace(/明儿个?|明个/g, '明天');
+                    t = t.replace(/后儿个?|后个/g, '后天');
+                    // 去掉口头开场白/结尾的“帮我记一下”之类
+                    t = t.replace(/^(帮我|帮忙|麻烦你|麻烦|请问|请(?!客)|我想|我要)\s*/, '');
+                    t = t.replace(/^(记一下|记一笔|记个账|记账|记帐|记上|记录一下|存一笔)\s*/, '');
+                    t = t.replace(/(记账|记一下|记录一下|记一笔)\s*$/, '');
+                    return t.replace(/\s+/g, ' ').trim();
+                },
+
+                // 口语金额写法 → 阿拉伯数字：三块五、五毛、1.5k、3千5、一百多
+                normalizeMoneyWords(text) {
+                    let t = text;
+                    // 1万2 / 3千5 → 12000 / 3500（必须先于单个单位处理）
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*万\s*([1-9])(?![0-9])/g, (m, a, b) => String(Number(a) * 10000 + Number(b) * 1000));
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*千\s*([1-9])(?![0-9])/g, (m, a, b) => String(Number(a) * 1000 + Number(b) * 100));
+                    // 1.5k / 2w
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*(?:k|K)(?![a-zA-Z])/g, (m, a) => String(Number(a) * 1000));
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*(?:w|W)(?![a-zA-Z])/g, (m, a) => String(Number(a) * 10000));
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*千(?![克g])/g, (m, a) => String(Number(a) * 1000));
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*万/g, (m, a) => String(Number(a) * 10000));
+                    // 28块5 / 28元5 → 28.5
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*(?:块|元)\s*([1-9])(?![0-9.])/g, (m, a, b) => a + '.' + b);
+                    // 三块五 / 十五块八 → 3.5 / 15.8
+                    t = t.replace(/([一二两三四五六七八九十]{1,3})\s*(?:块|元)\s*([一二两三四五六七八九])(?:毛|角)?/g, (m, a, b) => {
+                        const n = this.cnToNumber(a), f = this.cnToNumber(b);
+                        return (n != null && f != null) ? (n + f / 10) + '块' : m;
+                    });
+                    // 五毛 / 两毛五 → 0.5 / 0.25
+                    t = t.replace(/([一二两三四五六七八九])\s*毛\s*([一二三四五六七八九])?/g, (m, a, b) => {
+                        const f = this.cnToNumber(a);
+                        if (f == null) return m;
+                        const g = b ? this.cnToNumber(b) : 0;
+                        return String(f / 10 + (g || 0) / 100);
+                    });
+                    return t;
+                },
+
+                // 中文数字转阿拉伯数字（支持 二十八 / 一百二 / 三千五 / 两万五）
+                cnToNumber(str) {
+                    if (!str) return null;
+                    const dmap = { '零': 0, '〇': 0, '一': 1, '壹': 1, '二': 2, '两': 2, '贰': 2, '三': 3, '叁': 3, '四': 4, '肆': 4, '五': 5, '伍': 5, '六': 6, '陆': 6, '七': 7, '柒': 7, '八': 8, '捌': 8, '九': 9, '玖': 9 };
+                    const umap = { '十': 10, '拾': 10, '百': 100, '佰': 100, '千': 1000, '仟': 1000 };
+                    let total = 0, section = 0, num = -1, lastUnit = 0, seen = false, usedUnit = false, zeroFlag = false;
+                    for (const ch of str) {
+                        if (dmap[ch] !== undefined) {
+                            num = dmap[ch];
+                            seen = true;
+                            if (dmap[ch] === 0) zeroFlag = true;
+                        } else if (umap[ch] !== undefined) {
+                            usedUnit = true;
+                            seen = true;
+                            if (num < 0) num = 1;
+                            section += num * umap[ch];
+                            num = -1;
+                            lastUnit = umap[ch];
+                            zeroFlag = false;
+                        } else if (ch === '万' || ch === '萬') {
+                            usedUnit = true;
+                            if (num >= 0) { section += num; num = -1; }
+                            if (section === 0 && total === 0) section = 1;
+                            total = (total + section) * 10000;
+                            section = 0;
+                            lastUnit = 10000;
+                            zeroFlag = false;
+                        } else {
+                            return null;
+                        }
+                    }
+                    if (!seen) return null;
+                    if (num >= 0) {
+                        // 口语省略：一百二=120、一千五=1500、三万五=35000
+                        const factor = (usedUnit && lastUnit > 10 && !zeroFlag) ? lastUnit / 10 : 1;
+                        section += num * factor;
+                    }
+                    return total + section;
+                },
+
+                // 从一句话里找金额
+                parseAmount(text) {
+                    const t = this.normalizeMoneyWords(this.normalizeText(text));
+
+                    const candidates = [];
+                    // 记账语境里的“钱相关动词/名词”，用于把金额和最近的语义绑在一起
+                    const verbRe = /(花了|花掉|花去|花了钱|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|充|交了|交|还了|还|收到|收了|收入|赚了|挣了|到账|入账|进账|发了|发|存了|存|攒了|攒|转了|转|报销|退款|退了|工资|薪水|奖金|红包|补贴|提成|付费|订|请客|送了|送|给|打车|加油|停车|挂号|缴费|扣了|房租|水电|话费|网费|学费|零食|奶茶|外卖|电影)/;
+                    const numUnitRe = /^\s*(号|日|月|点|岁|个|次|天|分钟|小时|km|公里|g|ml|杯|瓶|斤|份|人|晚|%|折)/i;
+                    const moneyUnitRe = /^\s*(块钱|元钱|块|元|圆|rmb|r\b|¥)/i;
+
+                    // 金额前最近的动词离得越近，越可能是这笔账的金额
+                    const verbScore = before => {
+                        const ctx = before.slice(-12);
+                        const re = new RegExp(verbRe.source, 'g');
+                        let m, last = -1;
+                        while ((m = re.exec(ctx)) !== null) last = m.index + m[0].length;
+                        if (last < 0) return 0;
+                        const dist = ctx.length - last;
+                        return Math.max(0, 6 - dist);
+                    };
+
+                    let m;
+                    const arabicRe = /(\d+(?:\.\d{1,2})?)/g;
+                    while ((m = arabicRe.exec(t)) !== null) {
+                        const num = parseFloat(m[1]);
+                        if (!isFinite(num) || num <= 0) continue;
+                        const before = t.slice(0, m.index);
+                        const after = t.slice(m.index + m[0].length);
+                        let score = 1;
+                        if (moneyUnitRe.test(after)) score += 6;
+                        if (/^\s*(块|元|圆|钱)\s*(钱)?/.test(after)) score += 1;
+                        if (/(¥|￥|\$)\s*$/.test(before)) score += 4;
+                        if (numUnitRe.test(after)) score -= 7;
+                        score += verbScore(before);
+                        candidates.push({ num, score, index: m.index, end: m.index + m[0].length });
+                    }
+
+                    const cnRe = /([零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+)\s*(块钱|元钱|块|元|圆|钱)?/g;
+                    while ((m = cnRe.exec(t)) !== null) {
+                        const num = this.cnToNumber(m[1]);
+                        if (num === null || num <= 0) continue;
+                        // 单个“一/两”多半是量词或口语虚词，不当作金额
+                        if (!m[2] && m[1].length === 1 && num <= 2) continue;
+                        const before = t.slice(0, m.index);
+                        const after = t.slice(m.index + m[0].length);
+                        let score = 0;
+                        if (m[2]) score += 6;
+                        if (numUnitRe.test(after)) score -= 7;
+                        score += verbScore(before);
+                        candidates.push({ num, score, index: m.index, end: m.index + m[0].length });
+                    }
+
+                    if (!candidates.length) return null;
+                    candidates.sort((a, b) => b.score - a.score);
+                    return candidates[0];
+                },
+
+                // 找出句子里所有“像金额”的数字（按出现顺序）
+                amountCandidates(text) {
+                    const t = this.normalizeMoneyWords(this.normalizeText(text));
+                    const list = [];
+                    const scan = (src, re, isCn) => {
+                        let m;
+                        while ((m = re.exec(src)) !== null) {
+                            let num, start = m.index, end = m.index + m[0].length;
+                            if (isCn) {
+                                num = this.cnToNumber(m[1]);
+                                if (num === null || num <= 0) continue;
+                                // 单个“一/两”多半是量词或口语虚词
+                                if (!m[2] && m[1].length === 1 && num <= 2) continue;
+                            } else {
+                                num = parseFloat(m[1]);
+                                if (!isFinite(num) || num <= 0) continue;
+                            }
+                            const before = src.slice(0, start);
+                            const after = src.slice(end);
+                            let score = 1;
+                            if (/(块钱|元钱|块|元|圆|rmb|¥)\s*$/i.test(m[0]) || /^\s*(块钱|元钱|块|元|圆)/i.test(after)) score += 6;
+                            if (/(¥|￥|\$)\s*$/.test(before)) score += 4;
+                            if (/^\s*(号|日|月|点(?![心外菜餐])|岁|个|次|天|分钟|小时|km|公里|g|ml|杯|瓶|斤|份|人|晚(?![饭上安])|%|折)/i.test(after)) score -= 7;
+                            if (/^\s*[-\/]\d/.test(after)) score -= 20;
+                            if (/(花了|花掉|花去|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|充|交了|交|还了|还|收到|收了|收入|赚了|挣了|到账|入账|进账|发了|发|存了|存|攒了|攒|转了|转|报销|退款|退了|工资|薪水|奖金|红包|补贴|提成|付费|订|请客|送了|送|给|打车|加油|停车|挂号|缴费|扣了|房租|水电|话费|网费|学费|零食|奶茶|外卖|电影)\s*$/.test(before)) score += 6;
+                            list.push({ num, score, index: start, end });
+                        }
+                    };
+                    scan(t, /(\d+(?:\.\d{1,2})?)/g, false);
+                    scan(t, /([零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+)\s*(块钱|元钱|块|元|圆|钱)?/g, true);
+                    return list.sort((a, b) => a.index - b.index);
+                },
+
+                // 按标点 + 连接词把一句话切成几笔
+                splitClauses(text) {
+                    let t = text || '';
+                    t = t.replace(/[，,。；;！!？?\n]+/g, '|');
+                    t = t.replace(/\.(?![0-9])/g, '|');
+                    t = t.replace(/(然后|还有|另外|以及|顺便|再来|并且|而且|同时|外加|加上|再有|再记|记一笔|再买|再花|还买了|还花了|又买了|又花了|又吃了|又喝了|又打车|又买|又花|还买(?!单)|还花(?!呗)|还吃|还喝)/g, '|$1|');
+                    return t.split('|')
+                        .map(s => s.trim())
+                        .map(s => s.replace(/^(然后|还有|另外|以及|顺便|再来|并且|而且|同时|外加|加上|再有|再记|记一笔|再买|再花|又|再)/, '').trim())
+                        .filter(Boolean);
+                },
+
+                // 没有标点时，按第二个金额前的“动词 / 日期 / 分类名词”把连写句子切开
+                splitInlineMulti(text) {
+                    const cands = this.amountCandidates(text).filter(c => c.score >= 1);
+                    if (cands.length < 2) return [text];
+                    const verbRe = /(花了|花掉|花去|用了|用掉|付了|支付|消费|买了|吃了|喝了|充了|交了|还了|转了|请客|打车|加油|停车|缴费|订了|收到|收入|赚了|挣了|到账|入账|进账|发了|报销|退款|存了|攒了|买|吃|喝|点|充|交|还|存|转|发|收|付|用|花)/g;
+                    const dateWords = ['大前天', '昨天', '今天', '明天', '后天', '前天', '今早', '昨晚', '今早', '早上', '早晨', '上午', '中午', '下午', '晚上', '傍晚', '夜里', '半夜', '凌晨', '周[一二三四五六日天]', '星期[一二三四五六日天]', '礼拜[一二三四五六日天]'];
+                    const dateRe = new RegExp(dateWords.join('|'), 'g');
+                    // 分类名词：餐饮/交通/购物… 的白话词，作为“午饭28晚饭35”这种连写的切点
+                    const nouns = [];
+                    for (const key of Object.keys(this.pocketKeywordDict)) nouns.push(...this.pocketKeywordDict[key]);
+                    for (const p of this.pockets) nouns.push(p.name);
+                    for (const v of this.vaults) nouns.push(v.name);
+                    const nounList = [...new Set(nouns)].filter(w => w && w.length >= 2 && !/[\[\]()\\^$*+?.{}|]/.test(w)).sort((a, b) => b.length - a.length);
+                    const nounRe = new RegExp(nounList.join('|'), 'g');
+                    const cuts = [];
+                    for (let i = 1; i < cands.length; i++) {
+                        const minCut = cands[i - 1].end;
+                        const before = text.slice(0, cands[i].index);
+                        const pick = arr => arr.filter(x => x >= minCut).pop();
+                        const dm = [...before.matchAll(dateRe)].map(m => m.index);
+                        const vm = [...before.matchAll(verbRe)].map(m => m.index);
+                        const nm = [...before.matchAll(nounRe)].map(m => m.index);
+                        // 日期优先（判断“昨天买菜60今天水果20”该切在“今天”），其次动词，最后分类名词
+                        let cut = pick(dm);
+                        if (cut === undefined) cut = pick(vm);
+                        if (cut === undefined) cut = pick(nm);
+                        if (cut === undefined || cut <= 0) continue;
+                        cuts.push(cut);
+                    }
+                    if (!cuts.length) return [text];
+                    const out = [];
+                    let prev = 0;
+                    for (const c of cuts) {
+                        const seg = text.slice(prev, c).trim();
+                        if (seg) out.push(seg);
+                        prev = c;
+                    }
+                    const tail = text.slice(prev).trim();
+                    if (tail) out.push(tail);
+                    return out.length > 1 ? out : [text];
+                },
+
+                // 一句话拆成多笔；只有真的识别出 ≥2 个金额才拆
+                parseUtterances(raw) {
+                    const text = this.normalizeText(raw);
+                    if (!text) return [];
+                    const wholeDate = this.extractDate(text);
+
+                    let clauses = this.splitClauses(text);
+                    // 连接词可能把“中午又吃了碗面14”切成“中午/吃了/碗面14”这类碎片，
+                    // 再对每段做一次无标点切分，避免夹在中间的短笔被吞掉
+                    clauses = clauses.flatMap(c => this.splitInlineMulti(c));
+                    // 用空格隔开的多笔：“早饭8 午饭25”
+                    if (clauses.length < 2) {
+                        const sp = text.split(/\s+/).filter(Boolean);
+                        if (sp.length >= 2 && sp.every(s => { const a = this.parseAmount(s); return a && a.score >= 1; })) clauses = sp;
+                    }
+                    if (clauses.length < 2) clauses = this.splitInlineMulti(text);
+
+                    // 没金额的碎片（“嗯”“昨天买了点零食”）并到下一段，避免把一句话拆碎
+                    const packed = [];
+                    let carry = '';
+                    for (const c of clauses) {
+                        const a = this.parseAmount(c);
+                        if (a && a.score >= 1) {
+                            packed.push((carry ? carry + ' ' : '') + c);
+                            carry = '';
+                        } else {
+                            carry += (carry ? ' ' : '') + c;
+                        }
+                    }
+                    if (carry) {
+                        if (packed.length) packed[packed.length - 1] += ' ' + carry;
+                        else packed.push(carry);
+                    }
+
+                    if (packed.length < 2) {
+                        const one = this.parseUtterance(text);
+                        return one && one.amount > 0 ? [one] : [];
+                    }
+
+                    return packed
+                        .map(c => this.parseUtterance(c, wholeDate.date))
+                        .filter(p => p && p.amount > 0);
+                },
+
+                // 解析日期：返回 { date, rest, hasDate }
+                extractDate(text) {
+                    const now = new Date();
+                    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    const mk = d => this.dateToStr(d);
+                    const shift = days => {
+                        const d = new Date(base);
+                        d.setDate(d.getDate() + days);
+                        return mk(d);
+                    };
+                    let date = null;
+                    let rest = text;
+
+                    const consume = (re, handler) => {
+                        if (date) return;
+                        const m = rest.match(re);
+                        if (!m) return;
+                        const r = handler(m);
+                        if (r) {
+                            date = r;
+                            rest = rest.replace(m[0], ' ');
+                        }
+                    };
+
+                    // 2026-03-05 / 2026年3月5日
+                    consume(/(\d{4})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*[日号]?/, m =>
+                        mk(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))));
+
+                    // 3月5日
+                    consume(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/, m => {
+                        const y = now.getFullYear();
+                        let d = new Date(y, Number(m[1]) - 1, Number(m[2]));
+                        if (d > base) d = new Date(y - 1, Number(m[1]) - 1, Number(m[2]));
+                        return mk(d);
+                    });
+
+                    // 上个月5号 / 上月5号
+                    consume(/(上上个月|上个月|上月)\s*(\d{1,2})\s*[日号]?/, m => {
+                        const n = m[1] === '上上个月' ? 2 : 1;
+                        return mk(new Date(now.getFullYear(), now.getMonth() - n, Number(m[2])));
+                    });
+
+                    // 10月初 / 10月底 / 10月中旬
+                    consume(/(\d{1,2})\s*月\s*(初|上旬|中|中旬|底|末|下旬)/, m => {
+                        const y = now.getFullYear();
+                        let mo = Number(m[1]) - 1;
+                        if (new Date(y, mo, 1) > base) mo -= 12;
+                        const lastDay = new Date(y, mo + 1, 0).getDate();
+                        let day = 15;
+                        if (/初|上旬/.test(m[2])) day = 1;
+                        else if (/底|末|下旬/.test(m[2])) day = lastDay;
+                        return mk(new Date(y, mo, day));
+                    });
+
+                    // 上个月初 / 上个月底 / 上个月中旬
+                    consume(/(上上个月|上个月|上月)\s*(初|上旬|中|中旬|底|末|下旬)/, m => {
+                        const n = m[1] === '上上个月' ? 2 : 1;
+                        const y = now.getFullYear(), mo = now.getMonth() - n;
+                        const lastDay = new Date(y, mo + 1, 0).getDate();
+                        let day = 15;
+                        if (/初|上旬/.test(m[2])) day = 1;
+                        else if (/底|末|下旬/.test(m[2])) day = lastDay;
+                        return mk(new Date(y, mo, day));
+                    });
+
+                    // 只说「上个月」：落在上月同一天（超出月末则取月末）
+                    consume(/(上上个月|上个月|上月)(?!\s*\d)/, m => {
+                        const n = m[1] === '上上个月' ? 2 : 1;
+                        const y = now.getFullYear();
+                        const mo = now.getMonth() - n;
+                        const lastDay = new Date(y, mo + 1, 0).getDate();
+                        return mk(new Date(y, mo, Math.min(now.getDate(), lastDay)));
+                    });
+
+                    // 相对时间词（长的优先）
+                    const relMap = {
+                        '大后天': 3, '大前天': -3, '前天': -2, '昨天': -1, '昨晚': -1, '昨日': -1,
+                        '今天': 0, '今晚': 0, '今日': 0, '刚才': 0, '刚刚': 0, '明天': 1, '后天': 2
+                    };
+                    for (const k of ['大后天', '大前天', '前天', '昨天', '昨晚', '昨日', '今天', '今晚', '今日', '刚才', '刚刚', '明天', '后天']) {
+                        if (date) break;
+                        if (rest.includes(k)) {
+                            date = shift(relMap[k]);
+                            rest = rest.replace(k, ' ');
+                        }
+                    }
+
+                    // 3天前 / 五天前 / 两天以后
+                    consume(/(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*天\s*(之前|以前|前|之后|以后|后)/, m => {
+                        const n = /^\d+$/.test(m[1]) ? Number(m[1]) : this.cnToNumber(m[1]);
+                        if (!n) return null;
+                        return shift(/前/.test(m[2]) ? -n : n);
+                    });
+
+                    // 周三 / 上周五 / 星期天
+                    consume(/(上上|上|这|本)?\s*(?:周|星期|礼拜)([一二三四五六日天])/, m => {
+                        const map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+                        const target = map[m[2]];
+                        const cur = base.getDay();
+                        let diff = target - cur;
+                        if (m[1] === '这' || m[1] === '本') {
+                            // 本周：未来几天也算本周
+                        } else if (m[1] === '上') {
+                            diff -= 7;
+                        } else if (m[1] === '上上') {
+                            diff -= 14;
+                        } else if (diff > 0) {
+                            // 只说"周三"时通常指已经过去的那天
+                            diff -= 7;
+                        }
+                        return shift(diff);
+                    });
+
+                    // 月初 / 月中 / 月底（默认算这个月）
+                    consume(/(?:这个月|本月)?\s*(月初|上旬|月中|中旬|月底|月末|下旬)/, m => {
+                        const y = now.getFullYear(), mo = now.getMonth();
+                        const lastDay = new Date(y, mo + 1, 0).getDate();
+                        let day = 15;
+                        if (/初|上旬/.test(m[1])) day = 1;
+                        else if (/底|末|下旬/.test(m[1])) day = lastDay;
+                        return mk(new Date(y, mo, day));
+                    });
+
+                    // 3号 / 5日（未来日期回退到上个月）
+                    consume(/(\d{1,2})\s*[号日](?![常])/, m => {
+                        const day = Number(m[1]);
+                        if (day < 1 || day > 31) return null;
+                        let d = new Date(now.getFullYear(), now.getMonth(), day);
+                        if (d > base) d = new Date(now.getFullYear(), now.getMonth() - 1, day);
+                        return mk(d);
+                    });
+
+                    return { date, rest, hasDate: !!date };
+                },
+
+                // 判断收入还是支出（按“每一笔”的片段来判断）
+                detectType(text) {
+                    const learned = this.learnedType(text || '');
+                    if (learned) return learned;
+                    const t = text || '';
+                    // 明确的支出说法：先判，避免“给…转”“还花呗”被当成收入
+                    const strongExpense = /(花了|花掉|花去|花了钱|用完|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|交了|交费|交租|还了|还款|还花呗|还信用卡|还借呗|扣了|请客|送礼|罚款|缴|续费|打车|加油|停车|挂号|快递|理发|订了|转给)/;
+                    // 明确的收入说法
+                    const strongIncome = /(收入|收到|收了|收房租|收租金|收租|房租收入|到账|入账|进账|发工资|发了工资|发了奖金|工资|薪水|薪资|月薪|奖金|年终奖|提成|报销|退款|退钱|退了|退回|退给|返现|返利|利息|分红|收益|赚了|赚到|挣了|挣到|中奖|补贴|公积金|外快|稿费|接单|兼职|副业|卖了|卖掉|出手|闲鱼|二手|还我|红包到账)/;
+
+                    // 存进小金库 / 存款
+                    if (/(小金库|存款|存钱|攒钱|存进|存入|存到|存起来|存了|攒了|攒到|放进|转进|挪到)/.test(t) && !strongExpense.test(t)) return 'INCOME';
+                    // 发红包 / 随礼是人情支出
+                    if (/(发红包|给.{0,8}红包|随礼|份子钱|送礼)/.test(t)) return 'EXPENSE';
+                    // 收红包是收入
+                    if (/(收到红包|收红包|抢红包|收了个红包|收了个大红包)/.test(t)) return 'INCOME';
+                    // 别人还钱给我（“朋友还钱500”“小王还了我300”）是收入；注意“还朋友钱”仍是支出
+                    if (/(?:朋友|同事|同学|闺蜜|兄弟|姐妹|对象|老婆|老公|家人|亲戚|爸|妈|哥|姐|弟|妹|小王|小李|小张|小刘|老王|老张|室友|房东)\S{0,4}(?:还钱|还了我|还给我|还我|退给我|退我)/.test(t)) return 'INCOME';
+                    // “别人给我转/还给我/给我钱”是收入（先于“给…转”判断）
+                    if (/(给我转|转给我|给我转账|转账给我|还给我|退给我|打给我)/.test(t)) return 'INCOME';
+                    if (/(?:转|打|给|发|退|还)(?:了)?我\s*(?:[0-9]|[一二两三四五六七八九十百千万]|块钱|元钱)/.test(t) && !/(买|吃|喝|花|付|交|充|请客)/.test(t)) return 'INCOME';
+                    if (strongIncome.test(t) && !strongExpense.test(t)) return 'INCOME';
+                    return 'EXPENSE';
+                },
+
+                // 荷包名 + 分类词库 → 关键词列表
+                pocketKeywords(pocket) {
+                    const name = (pocket && pocket.name) || '';
+                    let list = [];
+                    for (const key of Object.keys(this.pocketKeywordDict)) {
+                        if (name.includes(key)) list = list.concat(this.pocketKeywordDict[key]);
+                    }
+                    const core = name.replace(/(美食|支出|日常|费用|开销|基金|专用|消费|娱乐|购物|其他)/g, '');
+                    if (core && core.length >= 2) list.push(core);
+                    return list;
+                },
+
+                // 匹配这笔账该落到哪个荷包 / 收入项目 / 小金库
+                matchTarget(text, type) {
+                    const learned = this.learnedTarget(text || '', type);
+                    if (learned) return learned;
+                    const t = (text || '').toLowerCase();
+
+                    if (type === 'INCOME') {
+                        if (/(小金库|存款|存钱|攒钱|存进|存入|存到|转到|放进|转进|挪到|存起来|存了|攒了|攒到|攒起来)/.test(t)) {
+                            const v = this.vaults.find(x => x.name && t.includes(x.name.toLowerCase()));
+                            if (v) return { pocketId: v.id, note: `小金库「${v.name}」` };
+                            if (this.vaults.length) return { pocketId: this.vaults[0].id, note: `小金库「${this.vaults[0].name}」` };
+                            return { pocketId: '', note: '通用存款池' };
+                        }
+                        if (/(报销|退款|退钱|退了|退回|返现|还钱|还我|还给我|还了我)/.test(t)) return { pocketId: '', note: '通用存款池' };
+
+                        let best = null, bestScore = 0;
+                        for (const s of this.currentMonthIncomeSources) {
+                            const nm = (s.name || '').toLowerCase();
+                            let score = 0;
+                            if (nm && t.includes(nm)) score += 100;
+                            if (s.category === 'MAIN' && /(工资|薪资|薪水|月薪|奖金|年终奖|主业)/.test(t)) score += 40;
+                            if (s.category === 'SUB' && /(副业|兼职|稿费|外快|接单|项目)/.test(t)) score += 40;
+                            if (score > bestScore) { bestScore = score; best = s; }
+                        }
+                        if (best) return { pocketId: best.id, note: `收入项目「${best.name}」` };
+                        const main = this.incomeSources.find(s => s.category === 'MAIN');
+                        if (main) {
+                            const subHint = /(副业|兼职|稿费|外快|接单|项目)/.test(t) && main.category !== 'SUB' ? '疑似副业收入，' : '';
+                            return { pocketId: main.id, note: `收入项目「${main.name}」（${subHint}可改）` };
+                        }
+                        return { pocketId: '', note: '通用存款池' };
+                    }
+
+                    let best = null, bestScore = 0;
+                    for (const p of this.pockets) {
+                        const nm = (p.name || '').toLowerCase();
+                        let score = 0;
+                        if (nm && t.includes(nm)) score += 100;
+                        let hit = 0;
+                        for (const kw of this.pocketKeywords(p)) {
+                            if (kw && t.includes(kw.toLowerCase())) hit += Math.min(3, Math.max(1, kw.length));
+                        }
+                        if (hit) score += 8 + Math.min(hit, 6) * 2;
+                        if (score > bestScore) { bestScore = score; best = p; }
+                    }
+                    if (best) return { pocketId: best.id, note: `小荷包「${best.name}」` };
+                    // 没命中关键词但明显是“给谁钱/借给谁”，落到人情往来
+                    const socialPocket = this.pockets.find(p => /人情|社交|往来|红包/.test(p.name || ''));
+                    if (socialPocket && /(给|送|借给|还|随礼|探望)/.test(t) && /(妈|爸|父母|爸妈|朋友|同事|同学|对象|老婆|老公|孩子|儿子|女儿|弟|妹|哥|姐|老师|亲戚|家里|长辈|奶奶|爷爷|外婆|外公)/.test(t)) {
+                        return { pocketId: socialPocket.id, note: `小荷包「${socialPocket.name}」` };
+                    }
+                    if (this.pockets.length === 1) {
+                        const only = this.pockets[0];
+                        // 推断这句话更像哪一类（打车→交通、话费→通讯、房租→住房…）
+                        let guess = '';
+                        for (const key of Object.keys(this.pocketKeywordDict)) {
+                            if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
+                        }
+                        const ownHit = (only.name || '').includes(guess) || this.pocketKeywords(only).some(kw => kw && t.includes(kw.toLowerCase()));
+                        const note = guess && !ownHit
+                            ? `疑似「${guess}」开销，暂记「${only.name}」（可改）`
+                            : `小荷包「${only.name}」（可改）`;
+                        return { pocketId: only.id, note };
+                    }
+                    let guess = '';
+                    for (const key of Object.keys(this.pocketKeywordDict)) {
+                        if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
+                    }
+                    return { pocketId: '', note: guess ? `请选择分类（疑似「${guess}」）` : '请选择分类' };
+                },
+
+                // 从原句里提取一个干净的备注
+                buildRemark(text) {
+                    let s = (text || '').toString();
+                    // 先保护会被数字/量词规则误伤的常用词（用私有区字符占位，不能用数字，否则会被数字规则吃掉）
+                    const keep = ['双十一', '双十二', '三明治', '二维码', '笔记本', '二手', '一起', '一直', '万一', '十字', '五一', '十一', '六一', '面条', '薯条', '辣条', '油条', '垃圾袋', '睡袋', '热水袋', '份子钱', '份子', '请客', '串串', '星巴克', '麦当劳', '肯德基', '必胜客', '德克士', '华莱士', '喜茶', '奈雪', '蜜雪冰城', '沙县', '海底捞'];
+                    const saved = [];
+                    s = s.replace(new RegExp(keep.join('|'), 'g'), m => String.fromCharCode(0xE100 + saved.push(m) - 1));
+                    // “早餐没吃”“午饭没吃”这种没花钱的片段别混进备注
+                    s = s.replace(/(?:早饭|早餐|早点|午饭|中饭|午饭|晚饭|晚餐|夜宵|宵夜)?没(?:吃|喝|买|花|用)/g, ' ');
+                    s = s.replace(/[0-9０-９.]+/g, ' ');
+                    s = s.replace(/[kK](?![a-zA-Z])/g, ' ');
+                    s = s.replace(/[一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+(块钱|元钱|块|元|圆|钱)?/g, ' ');
+                    s = s.replace(/[零〇]+(?=\s*(?:块钱|元钱|块|元|圆|钱|\d))/g, ' ');
+                    s = s.replace(/(今天|今晚|今日|昨天|昨晚|昨日|前天|大前天|明天|后天|大后天|刚才|刚刚|上上个月|上个月|上月|下个月|下月|这个月|本月|月初|月底|月中|月末|上上|上周|这周|本周|星期[一二三四五六日天]|礼拜[一二三四五六日天]|周[一二三四五六日天]|\d+\s*[月号日天]|早上|早晨|上午|中午|下午|晚上|傍晚|夜里|半夜|凌晨|清晨|母亲节|父亲节|教师节|情人节|中秋节|端午节|春节|元旦|国庆节|国庆)/g, ' ');
+                    s = s.replace(/(花了|花掉|花去|花(?!生|椒|瓶|瓣|园|店|语|呗)|用了|用掉|付了|支付了|支付|消费了|消费|收到|收了|收入|赚了|赚到|到账|入账|进账|发工资|发工资了|发了工资|发了|存进|存入|存到|存起来|存了|攒了|攒到|攒起来|放进|转入|挪到|打赏|给了|转了|转我|转给|买了|吃了|喝了|点了|报了|看了|还款|一笔|记账|记一下|记录一下|记下|记上|记到|帮我记)/g, ' ');
+                    s = s.replace(/(我|你|他|她|它|我们|你们|他们|块钱|元钱|块|元|圆|钱|的|了|呢|啊|吧|呀|哦|嘛|嗯|呃|唉|那个|这个|就是|今天|昨天|请|帮我|麻烦|一共|总共|大概|差不多|不到|将近|左右|上下|下来|然后|还有|还|又|再|顺便|跟|和|与|给|帮|替|来|把|到|没吃|没喝|没买|没花|没(?=啥|吃|喝|买|花|用)|人均|aa|AA|就(?!业|餐|是|算|位)|也(?!许)|啥|随便|整整|整(?![理个天体齐洁])|共(?![享同产和])|吃吃|喝喝|买买|逛逛)/g, ' ');
+                    s = s.replace(/(个|杯|瓶|袋|盒|份|斤|公斤|克|双|件|条|张|只|人|次|顿|碗|盘|串|堆|包(?!子|括|装|邮|月|年|厢|袱)|点儿?|些|多|毛|角)/g, ' ');
+                    s = s.replace(/[，。,.!！?？、\-—~～\s]+/g, ' ').trim();
+                    // 句首动词剥离放在还原保护词之前，避免「请客」被剥成「客」
+                    s = s.replace(/^(往|向)/, '').replace(/存$/, '').trim();
+                    const beforeLeading = s;
+                    const stripped = s.replace(/^(?:(?:买|吃|喝|购|要|点|来|付|交|充|还|存|给|送|订|请|个|些|了))+/, '').trim();
+                    s = stripped.length >= 2 ? stripped : beforeLeading;
+                    s = s.replace(/[\uE100-\uE1FF]/g, ch => saved[ch.charCodeAt(0) - 0xE100] || '');
+                    s = s.trim();
+                    // 去掉被更长词包含的单字碎片（如「猫 猫粮」→「猫粮」），再合成无空格备注
+                    const rawTokens = s.split(/\s+/).filter(Boolean);
+                    const tokens = rawTokens.filter((t, i) => !(t.length === 1 && rawTokens.some((o, j) => j !== i && o.length > 1 && o.indexOf(t) !== -1)));
+                    s = tokens.join('');
+                    if (!s) return '';
+                    return s.slice(0, 14);
+                },
+
+                // 一句话 → 结构化账目
+                parseUtterance(raw, defaultDate) {
+                    const text = this.normalizeText(raw);
+                    if (!text) return null;
+                    const dateInfo = this.extractDate(text);
+                    const amt = this.parseAmount(dateInfo.rest) || this.parseAmount(text);
+                    const type = this.detectType(text);
+                    const target = amt ? this.matchTarget(text, type) : { pocketId: '', note: '' };
+                    let remark = this.buildRemark(dateInfo.rest || text);
+                    if (!remark && type === 'INCOME') remark = '收入';
+                    return {
+                        text,
+                        amount: amt ? Math.round(amt.num * 100) / 100 : null,
+                        type,
+                        pocketId: target.pocketId,
+                        date: dateInfo.date || defaultDate || this.todayStr(),
+                        dateExplicit: dateInfo.hasDate || !!defaultDate,
+                        remark,
+                        note: target.note || ''
+                    };
+                },
+
+                // ==================== 对话记账：交互 ====================
+                pushChat(role, text, extra) {
+                    const msg = Object.assign({ role, text }, extra || {});
+                    this.chatMessages.push(msg);
+                    setTimeout(() => this.scrollChatToBottom(), 40);
+                    return msg;
+                },
+
+                scrollChatToBottom() {
+                    const el = document.querySelector('[x-ref="chatBody"]');
+                    if (el) el.scrollTop = el.scrollHeight;
+                },
+
+                openChat() {
+                    this.showChatModal = true;
+                    if (!this.chatMessages.length) {
+                        this.chatMessages = [{
+                            role: 'bot',
+                            text: '你好呀～直接跟我说花了什么就行，大白话也可以 😊\n比如「昨天奶茶12」「午饭花了28」「收到工资8000」。\n一句话说好几笔也行：「昨天收入500，花了30买零食」，我会拆开逐笔给你确认。\n确认之后才真正入账。'
+                        }];
+                    }
+                    setTimeout(() => {
+                        this.scrollChatToBottom();
+                        const input = document.querySelector('[x-ref="chatInput"]');
+                        if (input && window.innerWidth >= 640) input.focus();
+                    }, 60);
+                },
+
+                closeChat() {
+                    this.showChatModal = false;
+                    if (this.chatListening && this.chatRecognition) {
+                        try { this.chatRecognition.stop(); } catch (e) {}
+                    }
+                },
+
+                sendChatMessage(preset) {
+                    const isPreset = typeof preset === 'string';
+                    const text = (isPreset ? preset : this.chatInput || '').trim();
+                    if (!text) return;
+                    if (!isPreset) this.chatInput = '';
+                    this.pushChat('user', text);
+                    this.handleUtterance(text);
+                },
+
+                async handleUtterance(text) {
+                    // 上一句缺金额：这次只说数字，就拼起来
+                    let input = text;
+                    if (this.chatPendingText && /^\s*[0-9.０-９]+\s*$/.test(text)) {
+                        input = this.chatPendingText + ' ' + text;
+                        this.chatPendingText = '';
+                    }
+
+                    const list = this.parseUtterances(input).filter(p => p && p.amount > 0);
+                    if (!list.length) {
+                        this.chatPendingText = input;
+                        this.chatDraft = null;
+                        this.chatDraftQueue = [];
+                        // 完全没听出金额且有登录态时，交给 AI 再理解一次
+                        const hasNumber = /[0-9０-９一二两三四五六七八九十百千万]/.test(input);
+                        if (this.authToken && !hasNumber) {
+                            const ok = await this.tryAiParse(input);
+                            if (ok) { this.chatPendingText = ''; return; }
+                        }
+                        this.pushChat('bot', '这句我还没听出金额～这笔大概多少钱？直接回个数字就行（比如 28）。');
+                        return;
+                    }
+
+                    this.chatPendingText = '';
+                    const drafts = list.map(p => this.draftFromParsed(p, input));
+                    // 本地听出了金额，但支出没能归到分类 → 让 AI 补一次归类
+                    if (this.authToken && drafts.some(d => d.type === 'EXPENSE' && !d.pocketId)) {
+                        const ok = await this.tryAiParse(input, true);
+                        if (ok) return;
+                    }
+                    this.applyDrafts(drafts, input);
+                },
+
+                applyDrafts(drafts, text) {
+                    if (!drafts || !drafts.length) return;
+                    this.chatDraft = drafts[0];
+                    this.chatDraftQueue = drafts.slice(1);
+                    this.syncChatSelect();
+
+                    if (drafts.length === 1) {
+                        this.pushChat('bot', this.describeDraft(drafts[0]));
+                    } else {
+                        const lines = drafts.map((d, i) => `${i + 1}. ${d.type === 'INCOME' ? '收入' : '支出'} ¥${this.formatNumber(d.amount)}${d.note ? ' · ' + d.note : ''}`);
+                        this.pushChat('bot', `听懂了 ${drafts.length} 笔：\n${lines.join('\n')}\n先确认第 1 笔👇`);
+                    }
+                },
+
+                draftFromParsed(p, text) {
+                    const d = {
+                        type: p.type,
+                        amount: p.amount,
+                        pocketId: p.pocketId,
+                        date: p.date,
+                        remark: p.remark,
+                        note: p.note,
+                        text: text || p.text || ''
+                    };
+                    d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    return d;
+                },
+
+                describeDraft(d) {
+                    const typeTxt = d.type === 'INCOME' ? '收入' : '支出';
+                    return `听懂了：${typeTxt} ¥${this.formatNumber(d.amount)}${d.note ? '，' + d.note : ''}\n日期 ${d.date}，确认一下👇`;
+                },
+
+                // 切换收支类型：清空已选分类，避免金额落到错的池子
+                setChatDraftType(type) {
+                    if (!this.chatDraft || this.chatDraft.type === type) return;
+                    this.chatDraft.type = type;
+                    this.chatDraft.pocketId = '';
+                    this.chatDraft.note = '请选择分类';
+                    this.syncChatSelect();
+                },
+
+                // 动态渲染的 option 与 x-model 时序问题：渲染后手动回填 select 的值
+                syncChatSelect() {
+                    setTimeout(() => {
+                        const sel = document.querySelector('[x-ref="chatPocketSelect"]');
+                        if (sel && this.chatDraft) sel.value = this.chatDraft.pocketId || '';
+                    }, 30);
+                },
+
+                // 把一笔草稿写进账本，返回流水
+                commitDraft(d, silent) {
+                    const amount = Number(d && d.amount);
+                    if (!amount || amount <= 0) return null;
+                    const id = 'tx_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+                    const tx = {
+                        id,
+                        type: d.type === 'INCOME' ? 'INCOME' : 'EXPENSE',
+                        amount,
+                        pocketId: d.pocketId || '',
+                        date: d.date || this.todayStr(),
+                        remark: (d.remark || '').slice(0, 20)
+                    };
+                    this.transactions.push(tx);
+                    this.saveStorage();
+                    this.chatLastTxId = id;
+
+                    // 切到这笔账所在月份，保证在账单里看得见
+                    const ym = tx.date.slice(0, 7);
+                    if (ym !== this.selectedMonth) this.selectedMonth = ym;
+
+                    if (!silent) {
+                        const typeTxt = tx.type === 'INCOME' ? '收入' : '支出';
+                        const targetName = this.getPocketName(tx.pocketId);
+                        this.pushChat('bot', `已记好 ✅ ${typeTxt} ¥${this.formatNumber(tx.amount)} → ${targetName}（${tx.date}）`, { undo: true, txId: id });
+                    }
+                    return tx;
+                },
+
+                confirmChatDraft() {
+                    const d = this.chatDraft;
+                    if (!d) return;
+                    const tx = this.commitDraft(d);
+                    if (!tx) return;
+                    this.trackCorrection(d);
+
+                    if (this.chatDraftQueue.length) {
+                        this.chatDraft = this.chatDraftQueue.shift();
+                        this.syncChatSelect();
+                        this.pushChat('bot', `还剩 ${this.chatDraftQueue.length + 1} 笔没确认，接着看这笔记一下👇`);
+                    } else {
+                        this.chatDraft = null;
+                    }
+                },
+
+                // 一次性把当前这笔 + 队列里的都入账
+                confirmAllChatDrafts() {
+                    if (!this.chatDraft) return;
+                    const all = [this.chatDraft, ...this.chatDraftQueue];
+                    const ids = [];
+                    const lines = [];
+                    for (const d of all) {
+                        const tx = this.commitDraft(d, true);
+                        if (!tx) continue;
+                        this.trackCorrection(d);
+                        ids.push(tx.id);
+                        lines.push(`${tx.type === 'INCOME' ? '收入' : '支出'} ¥${this.formatNumber(tx.amount)} → ${this.getPocketName(tx.pocketId)}`);
+                    }
+                    this.chatDraft = null;
+                    this.chatDraftQueue = [];
+                    if (ids.length) {
+                        this.pushChat('bot', `全部记好了 ✅ 共 ${ids.length} 笔：\n${lines.join('\n')}`, { undoBatch: true, txIds: ids });
+                    }
+                },
+
+                undoLastChatTx(txId) {
+                    const id = txId || this.chatLastTxId;
+                    if (!id) return;
+                    if (!this.transactions.some(t => t.id === id)) {
+                        this.pushChat('bot', '这笔已经不在账本里了～');
+                        return;
+                    }
+                    this.transactions = this.transactions.filter(t => t.id !== id);
+                    if (this.chatLastTxId === id) this.chatLastTxId = null;
+                    this.saveStorage();
+
+                    const msgs = this.chatMessages.slice();
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].txId === id) {
+                            msgs[i] = Object.assign({}, msgs[i], { undo: false, txId: null, text: '（已撤销）' + msgs[i].text.replace(/^已记好 ✅ /, '') });
+                            break;
+                        }
+                    }
+                    this.chatMessages = msgs;
+                    this.pushChat('bot', '好，这笔已撤销 🧹');
+                },
+
+                // 撤销「全部入账」的那一批
+                undoChatBatch(txIds) {
+                    const ids = (txIds || []).filter(Boolean);
+                    if (!ids.length) return;
+                    const set = new Set(ids);
+                    const before = this.transactions.length;
+                    this.transactions = this.transactions.filter(t => !set.has(t.id));
+                    const removed = before - this.transactions.length;
+                    if (!removed) {
+                        this.pushChat('bot', '这几笔已经不在账本里了～');
+                        return;
+                    }
+                    this.saveStorage();
+
+                    const msgs = this.chatMessages.slice();
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].undoBatch && msgs[i].txIds && msgs[i].txIds.some(id => set.has(id))) {
+                            msgs[i] = Object.assign({}, msgs[i], { undoBatch: false, txIds: null, text: '（已撤销）' + msgs[i].text.replace(/^全部记好了 ✅ /, '') });
+                            break;
+                        }
+                    }
+                    this.chatMessages = msgs;
+                    this.pushChat('bot', `好，${removed} 笔都撤销了 🧹`);
+                },
+
+                // 语音输入（Web Speech API）
+                toggleVoice() {
+                    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SR) {
+                        this.pushChat('bot', '这个浏览器不支持语音识别，直接打字也很快～（iPhone 可用键盘自带的 🎤）');
+                        return;
+                    }
+                    if (this.chatListening && this.chatRecognition) {
+                        try { this.chatRecognition.stop(); } catch (e) {}
+                        return;
+                    }
+                    try {
+                        const rec = new SR();
+                        rec.lang = 'zh-CN';
+                        rec.interimResults = false;
+                        rec.maxAlternatives = 1;
+                        rec.onresult = ev => {
+                            let said = '';
+                            for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                                said += ev.results[i][0].transcript;
+                            }
+                            said = (said || '').trim();
+                            if (said) this.sendChatMessage(said);
+                        };
+                        rec.onerror = ev => {
+                            this.chatListening = false;
+                            const map = {
+                                'not-allowed': '麦克风被拒绝了，需要在浏览器里允许麦克风权限～',
+                                'service-not-allowed': '当前浏览器/环境不允许语音识别，先打字吧～',
+                                'no-speech': '没听到声音，再说一次？',
+                                'network': '语音识别需要联网，请检查网络～'
+                            };
+                            this.pushChat('bot', map[ev.error] || '语音识别出错啦，先打字试试～');
+                        };
+                        rec.onend = () => { this.chatListening = false; };
+                        this.chatRecognition = rec;
+                        this.chatListening = true;
+                        rec.start();
+                    } catch (e) {
+                        this.chatListening = false;
+                        this.pushChat('bot', '语音启动失败，先打字吧～');
+                    }
+                },
+
                 formatNumber(val) {
                     const num = Number(val || 0);
                     return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 }
             }
+        }
+    </script>
+    <script>
+        // PWA：注册 Service Worker（GitHub Pages 子路径下用相对 scope）
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+            });
         }
     </script>
 </body>
