@@ -1707,18 +1707,24 @@
                     const changed = o.type !== d.type
                         || String(o.pocketId || '') !== String(d.pocketId || '')
                         || Number(o.amount || 0) !== Number(d.amount || 0);
-                    if (!changed) return;
                     const corrected = {
                         type: d.type,
                         amount: Number(d.amount) || 0,
                         target: d.pocketId ? this.getPocketName(d.pocketId) : '',
                         note: d.remark || ''
                     };
-                    this.learnLocally(d.text || '', corrected);
+                    // 改过 → confirm：学规则；没改 → accepted：只留语料和统计，不学规则
+                    if (changed) this.learnLocally(d.text || '', corrected);
                     this.apiFetch('/learn/correct', {
                         method: 'POST',
-                        body: { raw: d.text || '', original: o, corrected, source: 'confirm' }
-                    }).then(() => this.loadLearnProfile()).catch(() => {});
+                        body: {
+                            raw: d.text || '',
+                            original: o,
+                            corrected,
+                            source: changed ? 'confirm' : 'accepted',
+                            origin_source: d.source || 'local'
+                        }
+                    }).then(() => { if (changed) this.loadLearnProfile(); }).catch(() => {});
                 },
 
                 // ==================== AI 兜底解析 ====================
@@ -1743,6 +1749,7 @@
                         text: text || ''
                     };
                     d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    d.source = 'ai';
                     return d;
                 },
 
@@ -3041,6 +3048,7 @@
                         text: text || p.text || ''
                     };
                     d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    d.source = 'local';
                     return d;
                 },
 
