@@ -12,7 +12,20 @@
     <meta name="description" content="口袋荷包：两个人共用一本账，说一句话就记好">
     <link rel="manifest" href="./manifest.json">
     <link rel="icon" href="./icons/icon-192.png">
-    <link rel="apple-touch-icon" href="./icons/icon-192.png">
+    <!-- iOS 主屏图标：180x180 不透明，避免系统自动叠黑底 -->
+    <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png">
+    <!-- iOS 启动图：从主屏启动时立刻显示品牌页，替代白屏 -->
+    <link rel="apple-touch-startup-image" href="./icons/splash/1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1242x2688.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/1242x2208.png" media="(device-width: 414px) and (device-height: 736px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
+    <link rel="apple-touch-startup-image" href="./icons/splash/750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)">
     <!-- Tailwind CSS（本地内置，避免 CDN 被墙导致样式/交互失效） -->
     <script src="./vendor/tailwind.min.js"></script>
     <!-- Alpine.js 交互引擎（本地内置，避免 CDN 被墙导致按钮全部失灵） -->
@@ -2981,6 +2994,40 @@
                 }
             }
         }
+    </script>
+    <!-- iOS 安装引导（仅 Safari 未添加到主屏时提示一次） -->
+    <div id="iosInstallTip"
+         style="display:none; position:fixed; left:12px; right:12px; z-index:80; bottom:calc(env(safe-area-inset-bottom) + 12px);">
+        <div style="display:flex; align-items:flex-start; gap:10px; background:#1A1A1A; color:#fff; border-radius:18px; padding:14px 14px 14px 16px; box-shadow:0 12px 30px -8px rgba(0,0,0,.35);">
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:800; letter-spacing:.2px;">把「口袋荷包」放到桌面</div>
+                <div style="font-size:11px; line-height:1.6; color:#C9C9C1; margin-top:4px;">
+                    点底部工具栏的 <span style="color:#D8F828; font-weight:700;">分享 ⬆</span> 按钮，选「添加到主屏幕」。以后从桌面图标打开就是全屏，没有地址栏。
+                </div>
+            </div>
+            <button type="button" id="iosInstallTipClose"
+                    style="border:0; background:#D8F828; color:#1A1A1A; font-weight:800; font-size:11px; padding:6px 12px; border-radius:999px; cursor:pointer; flex-shrink:0;">知道了</button>
+        </div>
+    </div>
+    <script>
+        // iOS 安装引导：仅在 iPhone/iPad 的 Safari 里、且还没添加到主屏时出现一次
+        (function () {
+            var ua = navigator.userAgent || '';
+            var isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+            var standalone = window.navigator.standalone === true ||
+                (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+            if (!isIOS || standalone) return;
+            var KEY = 'pocket.iosInstallTipDismissed';
+            try { if (localStorage.getItem(KEY) === '1') return; } catch (e) { return; }
+            var tip = document.getElementById('iosInstallTip');
+            var close = document.getElementById('iosInstallTipClose');
+            if (!tip || !close) return;
+            setTimeout(function () { tip.style.display = 'block'; }, 1200);
+            close.addEventListener('click', function () {
+                tip.style.display = 'none';
+                try { localStorage.setItem(KEY, '1'); } catch (e) {}
+            });
+        })();
     </script>
     <script>
         // PWA：注册 Service Worker（GitHub Pages 子路径下用相对 scope）
