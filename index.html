@@ -90,6 +90,26 @@
             from { opacity: 0; transform: scale(0.95) translateY(10px); }
             to { opacity: 1; transform: scale(1) translateY(0); }
         }
+        /* 对话记账助手 */
+        .chat-pulse {
+            animation: chatPulse 1.1s ease-in-out infinite;
+        }
+        @keyframes chatPulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.6; }
+        }
+        .chat-bubble-in {
+            animation: bubbleIn 0.18s ease-out;
+        }
+        @keyframes bubbleIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .chat-input::-webkit-outer-spin-button,
+        .chat-input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center pb-24" x-data="pocketApp()">
@@ -800,6 +820,134 @@
         </div>
     </div>
 
+    <!-- ==================== 9. 对话记账助手（说一句话自动记账） ==================== -->
+    <!-- 悬浮唤起按钮 -->
+    <button x-show="!showChatModal"
+            @click="openChat()"
+            class="fixed right-4 bottom-6 z-40 bg-black text-neon w-14 h-14 rounded-full shadow-lift flex items-center justify-center text-2xl active:scale-95 transition-transform cursor-pointer border border-zinc-800"
+            title="说一句，自动记账">
+        <span x-show="!chatListening">💬</span>
+        <span x-show="chatListening" class="chat-pulse">🎙️</span>
+    </button>
+
+    <!-- 对话面板 -->
+    <div x-show="showChatModal"
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center"
+         style="display: none;">
+        <div @click.outside="closeChat()"
+             class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-lift border border-black/5 modal-animate flex flex-col overflow-hidden h-[82vh] sm:h-[640px]">
+
+            <!-- 头部 -->
+            <header class="px-4 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-2xl bg-black text-neon flex items-center justify-center text-lg">🤖</div>
+                    <div>
+                        <h2 class="text-sm font-black text-zinc-900">对话记账</h2>
+                        <p class="text-[10px] text-zinc-400 font-bold">说一句话，自动记到对应荷包</p>
+                    </div>
+                </div>
+                <button @click="closeChat()" class="text-zinc-400 hover:text-black font-bold text-sm p-2 cursor-pointer">✕</button>
+            </header>
+
+            <!-- 消息区 -->
+            <div class="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 bg-cream-50" x-ref="chatBody">
+                <template x-for="(m, i) in chatMessages" :key="i">
+                    <div :class="m.role === 'user' ? 'flex justify-end' : 'flex justify-start'" class="chat-bubble-in">
+                        <div :class="m.role === 'user'
+                                        ? 'bg-black text-white rounded-2xl rounded-br-md'
+                                        : 'bg-white border border-black/5 text-zinc-800 rounded-2xl rounded-bl-md'"
+                             class="max-w-[85%] px-3.5 py-2.5 text-xs font-bold leading-relaxed shadow-soft whitespace-pre-line">
+                            <span x-text="m.text"></span>
+                            <template x-if="m.undo">
+                                <button @click="undoLastChatTx(m.txId)" class="block mt-1.5 text-[10px] font-black text-rose-500 underline cursor-pointer">撤销这笔</button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- 待确认卡片 -->
+                <template x-if="chatDraft">
+                    <div class="bg-white border-2 border-black rounded-2xl p-3.5 shadow-soft space-y-2.5 chat-bubble-in">
+                        <div class="flex items-center justify-between">
+                            <div class="grid grid-cols-2 gap-1 bg-cream-100 p-1 rounded-xl w-36">
+                                <button type="button" @click="setChatDraftType('EXPENSE')"
+                                        :class="chatDraft.type === 'EXPENSE' ? 'bg-black text-white' : 'text-zinc-500'"
+                                        class="py-1.5 text-[11px] font-extrabold rounded-lg transition cursor-pointer">支出</button>
+                                <button type="button" @click="setChatDraftType('INCOME')"
+                                        :class="chatDraft.type === 'INCOME' ? 'bg-black text-white' : 'text-zinc-500'"
+                                        class="py-1.5 text-[11px] font-extrabold rounded-lg transition cursor-pointer">收入</button>
+                            </div>
+                            <span class="text-[10px] font-bold text-zinc-400 text-right max-w-[45%]" x-text="chatDraft.note || ''"></span>
+                        </div>
+
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xl font-black text-zinc-300">¥</span>
+                            <input type="number" step="0.01" min="0" x-model="chatDraft.amount" placeholder="0.00"
+                                   class="chat-input flex-1 bg-cream-100 border border-black/10 rounded-xl px-3 py-2 text-xl font-black focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2">
+                            <select x-model="chatDraft.pocketId" x-ref="chatPocketSelect" @change="chatDraft.note = getPocketName(chatDraft.pocketId)" class="bg-cream-100 border border-black/10 rounded-xl px-2.5 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                                <option value="">通用存款池</option>
+                                <optgroup label="小荷包">
+                                    <template x-for="p in pockets" :key="p.id">
+                                        <option :value="p.id" x-text="`${p.icon} ${p.name}`"></option>
+                                    </template>
+                                </optgroup>
+                                <optgroup label="收入项目">
+                                    <template x-for="inc in currentMonthIncomeSources" :key="inc.id">
+                                        <option :value="inc.id" x-text="`${inc.icon} ${inc.name}`"></option>
+                                    </template>
+                                </optgroup>
+                                <optgroup label="小金库">
+                                    <template x-for="v in vaults" :key="v.id">
+                                        <option :value="v.id" x-text="`${v.icon} ${v.name}`"></option>
+                                    </template>
+                                </optgroup>
+                            </select>
+                            <input type="date" x-model="chatDraft.date"
+                                   class="bg-cream-100 border border-black/10 rounded-xl px-2.5 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+
+                        <input type="text" x-model="chatDraft.remark" maxlength="20" placeholder="备注（如：午饭）"
+                               class="w-full bg-cream-100 border border-black/10 rounded-xl px-3 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
+
+                        <div class="flex justify-end items-center space-x-2 pt-0.5">
+                            <button type="button" @click="chatDraft = null"
+                                    class="px-4 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
+                            <button type="button" @click="confirmChatDraft()"
+                                    class="bg-black text-neon hover:bg-zinc-800 px-5 py-2 rounded-full font-bold text-[11px] shadow-md transition cursor-pointer">确认入账</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- 输入区 -->
+            <div class="border-t border-black/5 bg-white px-3 pt-2.5 space-y-2" style="padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);">
+                <div class="flex space-x-1.5 overflow-x-auto pb-0.5">
+                    <template x-for="q in chatQuickPhrases" :key="q">
+                        <button type="button" @click="sendChatMessage(q)"
+                                class="shrink-0 bg-cream-100 hover:bg-cream-200 text-zinc-600 text-[10px] font-extrabold px-3 py-1.5 rounded-full transition cursor-pointer"
+                                x-text="q"></button>
+                    </template>
+                </div>
+
+                <form @submit.prevent="sendChatMessage()" class="flex items-center space-x-2">
+                    <button type="button" @click="toggleVoice()"
+                            :class="chatListening ? 'bg-rose-500 text-white chat-pulse' : 'bg-cream-100 text-zinc-700'"
+                            class="w-11 h-11 shrink-0 rounded-2xl flex items-center justify-center text-lg transition cursor-pointer"
+                            title="按住/点击说话">🎙️</button>
+                    <input type="text" x-model="chatInput" x-ref="chatInput" enterkeyhint="send"
+                           placeholder="比如：昨天午饭花了28"
+                           class="flex-1 min-w-0 bg-cream-100 border border-black/10 rounded-2xl px-4 py-3 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                    <button type="submit"
+                            class="w-11 h-11 shrink-0 rounded-2xl bg-black text-neon font-black text-lg flex items-center justify-center active:scale-95 transition cursor-pointer">↑</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <!-- ==================== Alpine.js 核心代码数据逻辑层 ==================== -->
     <script>
         function pocketApp() {
@@ -842,6 +990,33 @@
 
                 filterPocket: 'ALL',
                 filterType: 'ALL',
+
+                // 对话记账助手状态
+                showChatModal: false,
+                chatMessages: [],
+                chatDraft: null,
+                chatInput: '',
+                chatListening: false,
+                chatRecognition: null,
+                chatPendingText: '',
+                chatLastTxId: null,
+                chatQuickPhrases: ['午饭花了28', '昨天奶茶12', '打车 15', '收到工资 8000'],
+
+                // 记账分类关键词：用于把一句话落到对应的小荷包
+                pocketKeywordDict: {
+                    '餐饮': ['早饭', '早餐', '午饭', '午餐', '晚饭', '晚餐', '夜宵', '外卖', '奶茶', '咖啡', '饮料', '零食', '水果', '火锅', '烧烤', '食堂', '聚餐', '面包', '蛋糕', '牛奶', '吃饭', '喝水', '买菜', '餐'],
+                    '交通': ['打车', '滴滴', '出租车', '地铁', '公交', '车费', '高铁', '火车', '机票', '飞机', '加油', '油费', '停车', '单车', '过路费', '高速', '网约车'],
+                    '购物': ['衣服', '鞋', '裤子', '包包', '化妆品', '护肤', '口红', '淘宝', '京东', '拼多多', '网购', '数码', '手机', '耳机', '首饰', '购物'],
+                    '日用': ['日用', '超市', '纸巾', '洗发', '沐浴', '牙膏', '洗衣', '清洁', '垃圾袋'],
+                    '住房': ['房租', '租金', '水费', '电费', '物业', '燃气', '取暖', '宽带', '维修'],
+                    '娱乐': ['电影', '游戏', '唱歌', 'ktv', '演出', '门票', '旅游', '爬山', '健身', '视频会员', '演唱会', '剧本杀'],
+                    '医疗': ['医院', '看病', '买药', '挂号', '体检', '牙医', '门诊', '诊所'],
+                    '通讯': ['话费', '流量', '电话费', '手机费'],
+                    '学习': ['买书', '课程', '学费', '培训', '考试', '文具', '资料'],
+                    '宠物': ['猫粮', '狗粮', '宠物', '铲屎', '驱虫', '疫苗', '猫砂'],
+                    '人情': ['红包', '礼物', '请客', '份子', '随礼', '礼金', '送礼'],
+                    '美容': ['理发', '美发', '美甲', '美容', '剪头']
+                },
 
                 incomeSourceForm: { id: null, category: 'MAIN', name: '', amount: '', icon: '💼' },
                 allocateForm: { pocketId: '', amount: '' },
@@ -972,7 +1147,7 @@
                             type: 'INCOME',
                             amount: enteredAmount,
                             pocketId: targetId,
-                            date: new Date().toISOString().split('T')[0],
+                            date: this.todayStr(),
                             remark: '项目初始设定入账'
                         });
                     }
@@ -1287,7 +1462,7 @@
                         type: 'EXPENSE',
                         amount: '',
                         pocketId: pocketId || '',
-                        date: new Date().toISOString().split('T')[0],
+                        date: this.todayStr(),
                         remark: ''
                     };
                     this.showTransactionModal = true;
@@ -1312,6 +1487,498 @@
                     if (confirm('确认删除该笔流水记录吗？')) {
                         this.transactions = this.transactions.filter(t => t.id !== id);
                         this.saveStorage();
+                    }
+                },
+
+                // ==================== 对话记账：中文语义解析 ====================
+                pad2(n) {
+                    return n < 10 ? '0' + n : '' + n;
+                },
+
+                todayStr() {
+                    const d = new Date();
+                    return `${d.getFullYear()}-${this.pad2(d.getMonth() + 1)}-${this.pad2(d.getDate())}`;
+                },
+
+                dateToStr(d) {
+                    return `${d.getFullYear()}-${this.pad2(d.getMonth() + 1)}-${this.pad2(d.getDate())}`;
+                },
+
+                normalizeText(raw) {
+                    let t = (raw || '').toString();
+                    // 全角数字/符号转半角
+                    t = t.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 65248));
+                    t = t.replace(/．/g, '.').replace(/，/g, ',').replace(/[：]/g, ':');
+                    return t.replace(/\s+/g, ' ').trim();
+                },
+
+                // 中文数字转阿拉伯数字（支持 二十八 / 一百二 / 三千五 / 两万五）
+                cnToNumber(str) {
+                    if (!str) return null;
+                    const dmap = { '零': 0, '〇': 0, '一': 1, '壹': 1, '二': 2, '两': 2, '贰': 2, '三': 3, '叁': 3, '四': 4, '肆': 4, '五': 5, '伍': 5, '六': 6, '陆': 6, '七': 7, '柒': 7, '八': 8, '捌': 8, '九': 9, '玖': 9 };
+                    const umap = { '十': 10, '拾': 10, '百': 100, '佰': 100, '千': 1000, '仟': 1000 };
+                    let total = 0, section = 0, num = -1, lastUnit = 0, seen = false, usedUnit = false, zeroFlag = false;
+                    for (const ch of str) {
+                        if (dmap[ch] !== undefined) {
+                            num = dmap[ch];
+                            seen = true;
+                            if (dmap[ch] === 0) zeroFlag = true;
+                        } else if (umap[ch] !== undefined) {
+                            usedUnit = true;
+                            if (num < 0) num = 1;
+                            section += num * umap[ch];
+                            num = -1;
+                            lastUnit = umap[ch];
+                            zeroFlag = false;
+                        } else if (ch === '万' || ch === '萬') {
+                            usedUnit = true;
+                            if (num >= 0) { section += num; num = -1; }
+                            if (section === 0 && total === 0) section = 1;
+                            total = (total + section) * 10000;
+                            section = 0;
+                            lastUnit = 10000;
+                            zeroFlag = false;
+                        } else {
+                            return null;
+                        }
+                    }
+                    if (!seen) return null;
+                    if (num >= 0) {
+                        // 口语省略：一百二=120、一千五=1500、三万五=35000
+                        const factor = (usedUnit && lastUnit > 10 && !zeroFlag) ? lastUnit / 10 : 1;
+                        section += num * factor;
+                    }
+                    return total + section;
+                },
+
+                // 从一句话里找金额
+                parseAmount(text) {
+                    let t = this.normalizeText(text);
+                    // 28块5 → 28.5
+                    t = t.replace(/(\d+(?:\.\d+)?)\s*(?:块|元)\s*([1-9])(?![0-9])/g, (m, a, b) => a + '.' + b);
+
+                    const candidates = [];
+                    const verbCtx = /(花了|花掉|花去|用了|用掉|付了|支付|消费|买|吃|喝|充|交|还|收|到账|入账|赚|发|转|存|攒|给|打车|工资|奖金|红包|早餐|午餐|晚餐|奶茶|咖啡|地铁|公交|打车)/;
+                    let m;
+
+                    const arabicRe = /(\d+(?:\.\d{1,2})?)/g;
+                    while ((m = arabicRe.exec(t)) !== null) {
+                        const num = parseFloat(m[1]);
+                        if (!isFinite(num)) continue;
+                        const before = t.slice(0, m.index);
+                        const after = t.slice(m.index + m[0].length);
+                        let score = 0;
+                        if (/^\s*(块钱|元钱|块|元|圆|rmb|¥)/i.test(after)) score += 5;
+                        if (verbCtx.test(before.slice(-6))) score += 3;
+                        if (/^\s*(号|日|月|点|岁|个|次|天|分钟|小时|km|公里|g|ml|杯|瓶|斤|份)/i.test(after)) score -= 6;
+                        candidates.push({ num, score });
+                    }
+
+                    const cnRe = /([零〇一二两三四五六七八九十百千万]+)\s*(块钱|元钱|块|元|圆|钱)?/g;
+                    while ((m = cnRe.exec(t)) !== null) {
+                        const num = this.cnToNumber(m[1]);
+                        if (num === null || num <= 0) continue;
+                        const before = t.slice(0, m.index);
+                        const after = t.slice(m.index + m[0].length);
+                        let score = 1;
+                        if (m[2]) score += 6;
+                        if (verbCtx.test(before.slice(-6))) score += 3;
+                        if (/^\s*(号|日|月|点|个|次|天)/.test(after)) score -= 6;
+                        candidates.push({ num, score });
+                    }
+
+                    if (!candidates.length) return null;
+                    candidates.sort((a, b) => b.score - a.score);
+                    return candidates[0];
+                },
+
+                // 解析日期：返回 { date, rest, hasDate }
+                extractDate(text) {
+                    const now = new Date();
+                    const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                    const mk = d => this.dateToStr(d);
+                    const shift = days => {
+                        const d = new Date(base);
+                        d.setDate(d.getDate() + days);
+                        return mk(d);
+                    };
+                    let date = null;
+                    let rest = text;
+
+                    const consume = (re, handler) => {
+                        if (date) return;
+                        const m = rest.match(re);
+                        if (!m) return;
+                        const r = handler(m);
+                        if (r) {
+                            date = r;
+                            rest = rest.replace(m[0], ' ');
+                        }
+                    };
+
+                    // 2026-03-05 / 2026年3月5日
+                    consume(/(\d{4})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*[日号]?/, m =>
+                        mk(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))));
+
+                    // 3月5日
+                    consume(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]?/, m => {
+                        const y = now.getFullYear();
+                        let d = new Date(y, Number(m[1]) - 1, Number(m[2]));
+                        if (d > base) d = new Date(y - 1, Number(m[1]) - 1, Number(m[2]));
+                        return mk(d);
+                    });
+
+                    // 上个月5号 / 上月5号
+                    consume(/(上上个月|上个月|上月)\s*(\d{1,2})\s*[日号]?/, m => {
+                        const n = m[1] === '上上个月' ? 2 : 1;
+                        return mk(new Date(now.getFullYear(), now.getMonth() - n, Number(m[2])));
+                    });
+
+                    // 只说「上个月」：落在上月同一天（超出月末则取月末）
+                    consume(/(上上个月|上个月|上月)(?!\s*\d)/, m => {
+                        const n = m[1] === '上上个月' ? 2 : 1;
+                        const y = now.getFullYear();
+                        const mo = now.getMonth() - n;
+                        const lastDay = new Date(y, mo + 1, 0).getDate();
+                        return mk(new Date(y, mo, Math.min(now.getDate(), lastDay)));
+                    });
+
+                    // 相对时间词（长的优先）
+                    const relMap = {
+                        '大后天': 3, '大前天': -3, '前天': -2, '昨天': -1, '昨晚': -1, '昨日': -1,
+                        '今天': 0, '今晚': 0, '今日': 0, '刚才': 0, '刚刚': 0, '明天': 1, '后天': 2
+                    };
+                    for (const k of ['大后天', '大前天', '前天', '昨天', '昨晚', '昨日', '今天', '今晚', '今日', '刚才', '刚刚', '明天', '后天']) {
+                        if (date) break;
+                        if (rest.includes(k)) {
+                            date = shift(relMap[k]);
+                            rest = rest.replace(k, ' ');
+                        }
+                    }
+
+                    // 3天前 / 五天前 / 两天以后
+                    consume(/(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*天\s*(之前|以前|前|之后|以后|后)/, m => {
+                        const n = /^\d+$/.test(m[1]) ? Number(m[1]) : this.cnToNumber(m[1]);
+                        if (!n) return null;
+                        return shift(/前/.test(m[2]) ? -n : n);
+                    });
+
+                    // 周三 / 上周五 / 星期天
+                    consume(/(上上|上|这|本)?\s*(?:周|星期|礼拜)([一二三四五六日天])/, m => {
+                        const map = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '日': 0, '天': 0 };
+                        const target = map[m[2]];
+                        const cur = base.getDay();
+                        let diff = target - cur;
+                        if (m[1] === '这' || m[1] === '本') {
+                            // 本周：未来几天也算本周
+                        } else if (m[1] === '上') {
+                            diff -= 7;
+                        } else if (m[1] === '上上') {
+                            diff -= 14;
+                        } else if (diff > 0) {
+                            // 只说"周三"时通常指已经过去的那天
+                            diff -= 7;
+                        }
+                        return shift(diff);
+                    });
+
+                    // 3号 / 5日（未来日期回退到上个月）
+                    consume(/(\d{1,2})\s*[号日](?![常])/, m => {
+                        const day = Number(m[1]);
+                        if (day < 1 || day > 31) return null;
+                        let d = new Date(now.getFullYear(), now.getMonth(), day);
+                        if (d > base) d = new Date(now.getFullYear(), now.getMonth() - 1, day);
+                        return mk(d);
+                    });
+
+                    return { date, rest, hasDate: !!date };
+                },
+
+                // 判断收入还是支出
+                detectType(text) {
+                    const t = text || '';
+                    const expenseWords = /(花了|花掉|付了|支付|消费|买了|支出|花了钱)/;
+                    if (/(小金库|存款|存钱|攒钱|存进|存入|存到|转到|放进|转进|挪到|存起来)/.test(t) && !expenseWords.test(t)) return 'INCOME';
+                    if (/(发红包|给.{0,8}红包|随礼|份子钱|送礼)/.test(t)) return 'EXPENSE';
+                    if (/(收到|赚了|赚到|到账|入账|进账|发工资|发了工资|工资|奖金|报销|退款|返现|利息|收入|兼职|副业|稿费|外快)/.test(t) && !expenseWords.test(t)) return 'INCOME';
+                    return 'EXPENSE';
+                },
+
+                // 荷包名 + 分类词库 → 关键词列表
+                pocketKeywords(pocket) {
+                    const name = (pocket && pocket.name) || '';
+                    let list = [];
+                    for (const key of Object.keys(this.pocketKeywordDict)) {
+                        if (name.includes(key)) list = list.concat(this.pocketKeywordDict[key]);
+                    }
+                    const core = name.replace(/(美食|支出|日常|费用|开销|基金|专用|消费|娱乐|购物|其他)/g, '');
+                    if (core && core.length >= 2) list.push(core);
+                    return list;
+                },
+
+                // 匹配这笔账该落到哪个荷包 / 收入项目 / 小金库
+                matchTarget(text, type) {
+                    const t = (text || '').toLowerCase();
+
+                    if (type === 'INCOME') {
+                        if (/(小金库|存款|存钱|攒钱|存进|存入|存到|转到|放进|转进|挪到|存起来)/.test(t)) {
+                            const v = this.vaults.find(x => x.name && t.includes(x.name.toLowerCase()));
+                            if (v) return { pocketId: v.id, note: `小金库「${v.name}」` };
+                            if (this.vaults.length) return { pocketId: this.vaults[0].id, note: `小金库「${this.vaults[0].name}」` };
+                            return { pocketId: '', note: '通用存款池' };
+                        }
+                        if (/(报销|退款|返现)/.test(t)) return { pocketId: '', note: '通用存款池' };
+
+                        let best = null, bestScore = 0;
+                        for (const s of this.currentMonthIncomeSources) {
+                            const nm = (s.name || '').toLowerCase();
+                            let score = 0;
+                            if (nm && t.includes(nm)) score += 100;
+                            if (s.category === 'MAIN' && /(工资|薪资|薪水|月薪|奖金|年终奖|主业)/.test(t)) score += 40;
+                            if (s.category === 'SUB' && /(副业|兼职|稿费|外快|接单|项目)/.test(t)) score += 40;
+                            if (score > bestScore) { bestScore = score; best = s; }
+                        }
+                        if (best) return { pocketId: best.id, note: `收入项目「${best.name}」` };
+                        const main = this.incomeSources.find(s => s.category === 'MAIN');
+                        if (main) return { pocketId: main.id, note: `收入项目「${main.name}」（可改）` };
+                        return { pocketId: '', note: '通用存款池' };
+                    }
+
+                    let best = null, bestScore = 0;
+                    for (const p of this.pockets) {
+                        const nm = (p.name || '').toLowerCase();
+                        let score = 0;
+                        if (nm && t.includes(nm)) score += 100;
+                        let hit = 0;
+                        for (const kw of this.pocketKeywords(p)) {
+                            if (kw && t.includes(kw.toLowerCase())) hit++;
+                        }
+                        if (hit) score += 8 + Math.min(hit, 4) * 2;
+                        if (score > bestScore) { bestScore = score; best = p; }
+                    }
+                    if (best) return { pocketId: best.id, note: `小荷包「${best.name}」` };
+                    if (this.pockets.length === 1) return { pocketId: this.pockets[0].id, note: `小荷包「${this.pockets[0].name}」（可改）` };
+                    return { pocketId: '', note: '未匹配到荷包，请选择' };
+                },
+
+                // 从原句里提取一个干净的备注
+                buildRemark(text) {
+                    let s = (text || '').toString();
+                    s = s.replace(/[0-9０-９.]+/g, ' ');
+                    s = s.replace(/[零〇一二两三四五六七八九十百千万]+(块钱|元钱|块|元|圆|钱)?/g, ' ');
+                    s = s.replace(/(今天|今晚|今日|昨天|昨晚|昨日|前天|大前天|明天|后天|大后天|刚才|刚刚|上上个月|上个月|上月|上上|上周|这周|本周|星期[一二三四五六日天]|礼拜[一二三四五六日天]|周[一二三四五六日天]|\d+\s*[月号日天])/g, ' ');
+                    s = s.replace(/(花了|花掉|花去|用了|用掉|付了|支付了|支付|消费了|消费|充值|收到|赚了|赚到|到账|入账|进账|存进|存入|存到|攒了|打赏|发红包|给了|一笔|记账|记一下)/g, ' ');
+                    s = s.replace(/(块钱|元钱|块|元|圆|钱|的|了|呢|啊|吧|呀|哦|嘛|请|帮我|一共|总共|大概|差不多|左右)/g, ' ');
+                    s = s.replace(/[，。,.!！?？、\-—~～\s]+/g, ' ').trim();
+                    s = s.replace(/^(往|向)/, '').replace(/存$/, '');
+                    if (!s) return '';
+                    return s.slice(0, 14);
+                },
+
+                // 一句话 → 结构化账目
+                parseUtterance(raw) {
+                    const text = this.normalizeText(raw);
+                    if (!text) return null;
+                    const dateInfo = this.extractDate(text);
+                    const amt = this.parseAmount(dateInfo.rest) || this.parseAmount(text);
+                    const type = this.detectType(text);
+                    const target = amt ? this.matchTarget(text, type) : { pocketId: '', note: '' };
+                    return {
+                        text,
+                        amount: amt ? Math.round(amt.num * 100) / 100 : null,
+                        type,
+                        pocketId: target.pocketId,
+                        date: dateInfo.date || this.todayStr(),
+                        dateExplicit: dateInfo.hasDate,
+                        remark: this.buildRemark(dateInfo.rest || text),
+                        note: target.note || ''
+                    };
+                },
+
+                // ==================== 对话记账：交互 ====================
+                pushChat(role, text, extra) {
+                    const msg = Object.assign({ role, text }, extra || {});
+                    this.chatMessages.push(msg);
+                    setTimeout(() => this.scrollChatToBottom(), 40);
+                    return msg;
+                },
+
+                scrollChatToBottom() {
+                    const el = document.querySelector('[x-ref="chatBody"]');
+                    if (el) el.scrollTop = el.scrollHeight;
+                },
+
+                openChat() {
+                    this.showChatModal = true;
+                    if (!this.chatMessages.length) {
+                        this.chatMessages = [{
+                            role: 'bot',
+                            text: '你好呀～直接告诉我花了什么就行 😊\n比如「昨天午饭花了28」「打车15」「收到工资8000」。\n我会先给你确认卡片，你确认后才真正入账。'
+                        }];
+                    }
+                    setTimeout(() => {
+                        this.scrollChatToBottom();
+                        const input = document.querySelector('[x-ref="chatInput"]');
+                        if (input && window.innerWidth >= 640) input.focus();
+                    }, 60);
+                },
+
+                closeChat() {
+                    this.showChatModal = false;
+                    if (this.chatListening && this.chatRecognition) {
+                        try { this.chatRecognition.stop(); } catch (e) {}
+                    }
+                },
+
+                sendChatMessage(preset) {
+                    const isPreset = typeof preset === 'string';
+                    const text = (isPreset ? preset : this.chatInput || '').trim();
+                    if (!text) return;
+                    if (!isPreset) this.chatInput = '';
+                    this.pushChat('user', text);
+                    this.handleUtterance(text);
+                },
+
+                handleUtterance(text) {
+                    // 上一句缺金额：这次只说数字，就拼起来
+                    let input = text;
+                    if (this.chatPendingText && /^\s*[0-9.０-９]+\s*$/.test(text)) {
+                        input = this.chatPendingText + ' ' + text;
+                        this.chatPendingText = '';
+                    }
+
+                    const parsed = this.parseUtterance(input);
+                    if (!parsed || !parsed.amount || parsed.amount <= 0) {
+                        this.chatPendingText = input;
+                        this.chatDraft = null;
+                        this.pushChat('bot', '这句我还没听出金额～这笔大概多少钱？直接回个数字就行（比如 28）。');
+                        return;
+                    }
+
+                    this.chatPendingText = '';
+                    this.chatDraft = {
+                        type: parsed.type,
+                        amount: parsed.amount,
+                        pocketId: parsed.pocketId,
+                        date: parsed.date,
+                        remark: parsed.remark,
+                        note: parsed.note,
+                        text: input
+                    };
+                    const typeTxt = parsed.type === 'INCOME' ? '收入' : '支出';
+                    this.syncChatSelect();
+                    this.pushChat('bot', `听懂了：${typeTxt} ¥${parsed.amount}${parsed.note ? '，' + parsed.note : ''}\n日期 ${parsed.date}，确认一下👇`);
+                },
+
+                // 切换收支类型：清空已选分类，避免金额落到错的池子
+                setChatDraftType(type) {
+                    if (!this.chatDraft || this.chatDraft.type === type) return;
+                    this.chatDraft.type = type;
+                    this.chatDraft.pocketId = '';
+                    this.chatDraft.note = '请选择分类';
+                    this.syncChatSelect();
+                },
+
+                // 动态渲染的 option 与 x-model 时序问题：渲染后手动回填 select 的值
+                syncChatSelect() {
+                    setTimeout(() => {
+                        const sel = document.querySelector('[x-ref="chatPocketSelect"]');
+                        if (sel && this.chatDraft) sel.value = this.chatDraft.pocketId || '';
+                    }, 30);
+                },
+
+                confirmChatDraft() {
+                    const d = this.chatDraft;
+                    if (!d) return;
+                    const amount = Number(d.amount);
+                    if (!amount || amount <= 0) return;
+
+                    const id = 'tx_' + Date.now();
+                    const tx = {
+                        id,
+                        type: d.type === 'INCOME' ? 'INCOME' : 'EXPENSE',
+                        amount,
+                        pocketId: d.pocketId || '',
+                        date: d.date || this.todayStr(),
+                        remark: (d.remark || '').slice(0, 20)
+                    };
+                    this.transactions.push(tx);
+                    this.saveStorage();
+                    this.chatLastTxId = id;
+
+                    // 切到这笔账所在月份，保证在账单里看得见
+                    const ym = tx.date.slice(0, 7);
+                    if (ym !== this.selectedMonth) this.selectedMonth = ym;
+
+                    const typeTxt = tx.type === 'INCOME' ? '收入' : '支出';
+                    const targetName = this.getPocketName(tx.pocketId);
+                    this.chatDraft = null;
+                    this.pushChat('bot', `已记好 ✅ ${typeTxt} ¥${this.formatNumber(tx.amount)} → ${targetName}（${tx.date}）`, { undo: true, txId: id });
+                },
+
+                undoLastChatTx(txId) {
+                    const id = txId || this.chatLastTxId;
+                    if (!id) return;
+                    if (!this.transactions.some(t => t.id === id)) {
+                        this.pushChat('bot', '这笔已经不在账本里了～');
+                        return;
+                    }
+                    this.transactions = this.transactions.filter(t => t.id !== id);
+                    if (this.chatLastTxId === id) this.chatLastTxId = null;
+                    this.saveStorage();
+
+                    const msgs = this.chatMessages.slice();
+                    for (let i = msgs.length - 1; i >= 0; i--) {
+                        if (msgs[i].txId === id) {
+                            msgs[i] = Object.assign({}, msgs[i], { undo: false, txId: null, text: '（已撤销）' + msgs[i].text.replace(/^已记好 ✅ /, '') });
+                            break;
+                        }
+                    }
+                    this.chatMessages = msgs;
+                    this.pushChat('bot', '好，这笔已撤销 🧹');
+                },
+
+                // 语音输入（Web Speech API）
+                toggleVoice() {
+                    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SR) {
+                        this.pushChat('bot', '这个浏览器不支持语音识别，直接打字也很快～（iPhone 可用键盘自带的 🎤）');
+                        return;
+                    }
+                    if (this.chatListening && this.chatRecognition) {
+                        try { this.chatRecognition.stop(); } catch (e) {}
+                        return;
+                    }
+                    try {
+                        const rec = new SR();
+                        rec.lang = 'zh-CN';
+                        rec.interimResults = false;
+                        rec.maxAlternatives = 1;
+                        rec.onresult = ev => {
+                            let said = '';
+                            for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                                said += ev.results[i][0].transcript;
+                            }
+                            said = (said || '').trim();
+                            if (said) this.sendChatMessage(said);
+                        };
+                        rec.onerror = ev => {
+                            this.chatListening = false;
+                            const map = {
+                                'not-allowed': '麦克风被拒绝了，需要在浏览器里允许麦克风权限～',
+                                'service-not-allowed': '当前浏览器/环境不允许语音识别，先打字吧～',
+                                'no-speech': '没听到声音，再说一次？',
+                                'network': '语音识别需要联网，请检查网络～'
+                            };
+                            this.pushChat('bot', map[ev.error] || '语音识别出错啦，先打字试试～');
+                        };
+                        rec.onend = () => { this.chatListening = false; };
+                        this.chatRecognition = rec;
+                        this.chatListening = true;
+                        rec.start();
+                    } catch (e) {
+                        this.chatListening = false;
+                        this.pushChat('bot', '语音启动失败，先打字吧～');
                     }
                 },
 
