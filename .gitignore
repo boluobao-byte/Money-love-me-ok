@@ -1,0 +1,5 @@
+# 构建产物与签名文件不入库
+android/keystore/
+android/app/src/main/build/
+android/*.apk
+.DS_Store
