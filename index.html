@@ -8,6 +8,11 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="口袋荷包">
+    <meta name="theme-color" content="#FAF9F6">
+    <meta name="description" content="口袋荷包：两个人共用一本账，说一句话就记好">
+    <link rel="manifest" href="./manifest.json">
+    <link rel="icon" href="./icons/icon-192.png">
+    <link rel="apple-touch-icon" href="./icons/icon-192.png">
     <!-- Tailwind CSS（本地内置，避免 CDN 被墙导致样式/交互失效） -->
     <script src="./vendor/tailwind.min.js"></script>
     <!-- Alpine.js 交互引擎（本地内置，避免 CDN 被墙导致按钮全部失灵） -->
@@ -126,7 +131,11 @@
             </div>
         </div>
 
-        <div class="flex items-center space-x-3">
+        <div class="flex items-center space-x-2">
+            <button @click="openAccount()" class="relative w-10 h-10 rounded-full bg-white border border-zinc-200 shadow-sm flex items-center justify-center text-sm font-black text-zinc-700 active:scale-95 transition cursor-pointer" title="账号与云同步">
+                <span x-text="authUser ? ((authUser.nickname || '我').slice(0, 1)) : '👤'"></span>
+                <span class="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white" :class="syncDotClass()"></span>
+            </button>
             <button @click="openTransactionModal()" class="bg-black hover:bg-zinc-800 text-neon px-5 py-2.5 rounded-full font-bold text-xs shadow-capsule transition-all duration-200 flex items-center space-x-2 active:scale-95 group border border-zinc-800 cursor-pointer">
                 <svg class="w-4 h-4 stroke-current stroke-[2.5] transition-transform group-hover:rotate-90" fill="none" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
                 <span>记一笔</span>
@@ -830,6 +839,78 @@
         <span x-show="chatListening" class="chat-pulse">🎙️</span>
     </button>
 
+    <!-- 账号与云同步面板 -->
+    <div x-show="showAccountModal"
+         x-transition.opacity
+         class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center"
+         style="display: none;">
+        <div @click.outside="showAccountModal = false"
+             class="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-lift border border-black/5 modal-animate overflow-hidden">
+            <header class="px-4 pt-4 pb-3 border-b border-black/5 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <div class="w-9 h-9 rounded-2xl bg-black text-neon flex items-center justify-center text-lg">🔐</div>
+                    <div>
+                        <h2 class="text-sm font-black text-zinc-900">账号与云同步</h2>
+                        <p class="text-[10px] text-zinc-400 font-bold">两台手机共用一本账</p>
+                    </div>
+                </div>
+                <button @click="showAccountModal = false" class="text-zinc-400 hover:text-black font-bold text-sm p-2 cursor-pointer">✕</button>
+            </header>
+
+            <div class="p-4 space-y-3" style="padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);">
+                <!-- 未登录 -->
+                <template x-if="!authToken">
+                    <div class="space-y-3">
+                        <p class="text-[11px] font-bold text-zinc-500 leading-relaxed">用手机号登录后，账本会自动存到云端，换手机 / 两台手机都能接着记。</p>
+                        <div>
+                            <label class="text-[10px] font-black text-zinc-400">手机号</label>
+                            <input type="tel" inputmode="numeric" maxlength="11" x-model="loginPhone" placeholder="请输入手机号"
+                                   class="mt-1 w-full bg-cream-100 border border-black/10 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                        </div>
+                        <div>
+                            <label class="text-[10px] font-black text-zinc-400">验证码</label>
+                            <div class="mt-1 flex items-center space-x-2">
+                                <input type="tel" inputmode="numeric" maxlength="6" x-model="loginCode" placeholder="6 位验证码"
+                                       class="flex-1 min-w-0 bg-cream-100 border border-black/10 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-black">
+                                <button type="button" @click="sendSmsCode()"
+                                        :disabled="sendingSms || smsCountdown > 0"
+                                        :class="(sendingSms || smsCountdown > 0) ? 'bg-zinc-200 text-zinc-400' : 'bg-black text-neon active:scale-95'"
+                                        class="shrink-0 px-3.5 py-2.5 rounded-xl text-[11px] font-black transition cursor-pointer"
+                                        x-text="sendingSms ? '发送中…' : (smsCountdown > 0 ? (smsCountdown + 's 后重发') : '获取验证码')"></button>
+                            </div>
+                        </div>
+                        <p x-show="loginError" x-text="loginError" class="text-[11px] font-bold text-rose-500"></p>
+                        <button type="button" @click="doLogin()"
+                                :disabled="loggingIn"
+                                :class="loggingIn ? 'bg-zinc-300 text-zinc-500' : 'bg-black text-neon active:scale-[0.98]'"
+                                class="w-full py-3 rounded-2xl text-sm font-black transition cursor-pointer"
+                                x-text="loggingIn ? '登录中…' : '登录 / 自动注册'"></button>
+                        <button type="button" @click="showAccountModal = false"
+                                class="w-full py-2 text-[11px] font-bold text-zinc-400 cursor-pointer">先不登录，只在本地用</button>
+                    </div>
+                </template>
+
+                <!-- 已登录 -->
+                <template x-if="authToken">
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between bg-cream-100 rounded-2xl px-3.5 py-3">
+                            <div>
+                                <div class="text-sm font-black text-zinc-900" x-text="authUser ? (authUser.nickname || '已登录') : '已登录'"></div>
+                                <div class="text-[11px] font-bold text-zinc-400" x-text="authUser ? authUser.phone : ''"></div>
+                            </div>
+                            <span class="text-[10px] font-black px-2.5 py-1 rounded-full" :class="syncBadgeClass()" x-text="syncStateText()"></span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button type="button" @click="syncNow()" class="py-2.5 rounded-xl bg-black text-neon text-[11px] font-black active:scale-95 transition cursor-pointer">立即同步</button>
+                            <button type="button" @click="doLogout()" class="py-2.5 rounded-xl bg-cream-100 text-zinc-500 text-[11px] font-black active:scale-95 transition cursor-pointer">退出登录</button>
+                        </div>
+                        <p class="text-[10px] font-bold text-zinc-400 leading-relaxed">登录状态会自动续期，不用经常重新登录。退出后本机账本仍保留，但停止云同步。</p>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
     <!-- 对话面板 -->
     <div x-show="showChatModal"
          x-transition.opacity
@@ -924,6 +1005,8 @@
                                class="w-full bg-cream-100 border border-black/10 rounded-xl px-3 py-2 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-black">
 
                         <div class="flex justify-end items-center space-x-2 pt-0.5">
+                            <button type="button" @click="aiReparseDraft()" x-show="authToken"
+                                    class="mr-auto px-3 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">🤖 AI 重解析</button>
                             <button type="button" @click="chatDraft = null; chatDraftQueue = []"
                                     class="px-4 py-2 rounded-full font-bold text-[11px] text-zinc-500 hover:bg-zinc-100 cursor-pointer">取消</button>
                             <button type="button" @click="confirmChatDraft()"
@@ -959,6 +1042,11 @@
     </div>
 
     <!-- ==================== Alpine.js 核心代码数据逻辑层 ==================== -->
+    <!-- 轻提示 -->
+    <div x-show="syncToast" x-transition.opacity
+         class="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60] bg-black/90 text-white text-[11px] font-bold px-4 py-2.5 rounded-full shadow-lift whitespace-nowrap"
+         style="display: none;" x-text="syncToast"></div>
+
     <script>
         function pocketApp() {
             return {
@@ -1013,6 +1101,30 @@
                 chatDraftQueue: [],      // 一句话里识别出的后续账目，逐笔确认
                 chatQuickPhrases: ['昨天奶茶12', '午饭花了28', '打车15', '收到工资8000', '昨天收入500，花了30买零食'],
 
+                // 账号 / 云同步 / 自主学习
+                apiBase: 'https://demo.qiuli55.top/pocket-api',
+                authToken: '',
+                authUser: null,
+                showAccountModal: false,
+                loginPhone: '',
+                loginCode: '',
+                loginError: '',
+                sendingSms: false,
+                loggingIn: false,
+                smsCountdown: 0,
+                smsTimer: null,
+                deviceId: '',
+                syncRev: 0,
+                syncState: 'local',
+                syncDirty: false,
+                syncBusy: false,
+                syncTimer: null,
+                syncToast: '',
+                toastTimer: null,
+                applyingRemote: false,
+                learnProfile: { vocab: {}, type: {}, events: 0 },
+                aiBusy: false,
+
                 // 记账分类关键词：用于把一句话落到对应的小荷包（尽量覆盖大白话）
                 pocketKeywordDict: {
                     '餐饮': ['餐', '吃饭', '吃了', '早饭', '早餐', '早点', '午饭', '中饭', '午餐', '晚饭', '晚餐', '夜宵', '宵夜', '外卖', '奶茶', '咖啡', '饮料', '可乐', '雪碧', '啤酒', '零食', '小吃', '水果', '火锅', '烧烤', '串串', '麻辣烫', '炸鸡', '汉堡', '披萨', '面包', '蛋糕', '甜点', '甜品', '冰淇淋', '冰激凌', '雪糕', '牛奶', '酸奶', '豆浆', '包子', '饺子', '面条', '拉面', '米粉', '螺蛳粉', '粥', '米饭', '食堂', '聚餐', '请吃饭', '下馆子', '买菜', '买菜做饭', '菜市场', '菜', '鸡蛋', '泡面', '喝水', '矿泉水', '茶叶', '巧克力', '饼干', '三明治', '盒饭', '快餐', '盖饭', '米线', '酸辣粉', '卤味', '关东煮', '烤肠', '鸡排', '寿司', '自助餐', '星巴克', '瑞幸', '麦当劳', '肯德基', '必胜客', '德克士', '华莱士', '喜茶', '奈雪', '蜜雪冰城', '沙县', '海底捞', '早点摊'],
@@ -1049,6 +1161,19 @@
                     if (savedIncomes) { try { this.incomeSources = JSON.parse(savedIncomes); } catch(e){} }
                     if (savedBudgets) { try { this.monthlyBudgets = JSON.parse(savedBudgets); } catch(e){} }
                     if (savedVaults) { try { this.vaults = JSON.parse(savedVaults); } catch(e){} }
+
+                    // 账号与同步状态
+                    this.authToken = localStorage.getItem('pocket_auth_token') || '';
+                    this.deviceId = localStorage.getItem('pocket_device_id') || ('dev_' + Math.random().toString(36).slice(2, 10));
+                    localStorage.setItem('pocket_device_id', this.deviceId);
+                    this.syncRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                    document.addEventListener('visibilitychange', () => {
+                        if (!document.hidden) this.autoPull();
+                    });
+                    window.addEventListener('online', () => {
+                        if (this.syncDirty) this.pushLedger();
+                    });
+                    this.bootAccount();
                 },
 
                 saveStorage() {
@@ -1058,6 +1183,473 @@
                     localStorage.setItem('pocket_v5_incomes', JSON.stringify(this.incomeSources));
                     localStorage.setItem('pocket_v5_monthly_budgets', JSON.stringify(this.monthlyBudgets));
                     localStorage.setItem('pocket_v5_vaults_list', JSON.stringify(this.vaults));
+                    this.markDirty();
+                },
+
+                // ==================== 账号 / 云同步 ====================
+                openAccount() {
+                    this.loginError = '';
+                    this.showAccountModal = true;
+                },
+
+                saveAuthToken(token) {
+                    if (!token) return;
+                    this.authToken = token;
+                    localStorage.setItem('pocket_auth_token', token);
+                },
+
+                clearAuth() {
+                    this.authToken = '';
+                    this.authUser = null;
+                    this.syncState = 'local';
+                    this.syncDirty = false;
+                    this.learnProfile = { vocab: {}, type: {}, events: 0 };
+                    localStorage.removeItem('pocket_auth_token');
+                    localStorage.removeItem('pocket_sync_rev');
+                },
+
+                syncDotClass() {
+                    return {
+                        synced: 'bg-emerald-500',
+                        syncing: 'bg-amber-400',
+                        error: 'bg-rose-500',
+                        local: 'bg-zinc-300'
+                    }[this.syncState] || 'bg-zinc-300';
+                },
+
+                syncBadgeClass() {
+                    return {
+                        synced: 'bg-emerald-100 text-emerald-700',
+                        syncing: 'bg-amber-100 text-amber-700',
+                        error: 'bg-rose-100 text-rose-600',
+                        local: 'bg-zinc-200 text-zinc-500'
+                    }[this.syncState] || 'bg-zinc-200 text-zinc-500';
+                },
+
+                syncStateText() {
+                    return {
+                        synced: '已同步',
+                        syncing: '同步中',
+                        error: '同步失败',
+                        local: '本地模式'
+                    }[this.syncState] || '本地模式';
+                },
+
+                toast(text) {
+                    this.syncToast = text;
+                    clearTimeout(this.toastTimer);
+                    this.toastTimer = setTimeout(() => { this.syncToast = ''; }, 2600);
+                },
+
+                async apiFetch(path, options) {
+                    const opts = Object.assign({}, options || {});
+                    const headers = Object.assign({}, opts.headers || {});
+                    if (opts.body && typeof opts.body !== 'string') {
+                        headers['Content-Type'] = 'application/json';
+                        opts.body = JSON.stringify(opts.body);
+                    }
+                    if (this.authToken) headers['Authorization'] = 'Bearer ' + this.authToken;
+                    opts.headers = headers;
+                    const res = await fetch(this.apiBase + path, opts);
+                    // 服务端在临近过期时下发新 token，自动续期
+                    const fresh = res.headers.get('X-Pocket-Token');
+                    if (fresh) this.saveAuthToken(fresh);
+                    let data = null;
+                    try { data = await res.json(); } catch (e) {}
+                    if (!res.ok) {
+                        const err = new Error((data && (data.detail || data.error)) || ('网络错误 ' + res.status));
+                        err.status = res.status;
+                        err.data = data;
+                        throw err;
+                    }
+                    return data;
+                },
+
+                async sendSmsCode() {
+                    if (this.sendingSms || this.smsCountdown > 0) return;
+                    const phone = (this.loginPhone || '').replace(/\s+/g, '');
+                    if (!/^1[3-9]\d{9}$/.test(phone)) { this.loginError = '请输入正确的手机号'; return; }
+                    this.sendingSms = true;
+                    this.loginError = '';
+                    try {
+                        await this.apiFetch('/auth/sms/send', { method: 'POST', body: { phone } });
+                        this.smsCountdown = 60;
+                        clearInterval(this.smsTimer);
+                        this.smsTimer = setInterval(() => {
+                            this.smsCountdown -= 1;
+                            if (this.smsCountdown <= 0) clearInterval(this.smsTimer);
+                        }, 1000);
+                    } catch (e) {
+                        this.loginError = e.message || '验证码发送失败';
+                    } finally {
+                        this.sendingSms = false;
+                    }
+                },
+
+                async doLogin() {
+                    const phone = (this.loginPhone || '').replace(/\s+/g, '');
+                    const code = (this.loginCode || '').replace(/\s+/g, '');
+                    if (!/^1[3-9]\d{9}$/.test(phone)) { this.loginError = '请输入正确的手机号'; return; }
+                    if (!/^\d{4,8}$/.test(code)) { this.loginError = '请输入验证码'; return; }
+                    this.loggingIn = true;
+                    this.loginError = '';
+                    try {
+                        const res = await this.apiFetch('/auth/sms/login', { method: 'POST', body: { phone, code } });
+                        this.saveAuthToken(res.token);
+                        this.authUser = res.user;
+                        this.loginCode = '';
+                        this.showAccountModal = false;
+                        localStorage.removeItem('pocket_sync_rev');
+                        this.syncRev = 0;
+                        await this.bootAccount(true);
+                        this.toast('登录成功，已开启云同步');
+                    } catch (e) {
+                        this.loginError = e.message || '登录失败';
+                    } finally {
+                        this.loggingIn = false;
+                    }
+                },
+
+                doLogout() {
+                    if (!window.confirm('退出后本机账本仍保留，但会停止云同步。确定退出？')) return;
+                    this.clearAuth();
+                    this.showAccountModal = false;
+                    this.toast('已退出登录，当前为本地模式');
+                },
+
+                ledgerSnapshot() {
+                    return {
+                        version: 5,
+                        pockets: this.pockets,
+                        transactions: this.transactions,
+                        baseSavings: Number(this.baseSavings) || 0,
+                        incomeSources: this.incomeSources,
+                        monthlyBudgets: this.monthlyBudgets,
+                        vaults: this.vaults,
+                        savedAt: new Date().toISOString()
+                    };
+                },
+
+                applyLedgerData(data) {
+                    if (!data) return false;
+                    this.applyingRemote = true;
+                    if (Array.isArray(data.pockets)) this.pockets = data.pockets;
+                    if (Array.isArray(data.transactions)) this.transactions = data.transactions;
+                    if (data.baseSavings !== undefined) this.baseSavings = Number(data.baseSavings) || 0;
+                    if (Array.isArray(data.incomeSources)) this.incomeSources = data.incomeSources;
+                    if (data.monthlyBudgets && typeof data.monthlyBudgets === 'object') this.monthlyBudgets = data.monthlyBudgets;
+                    if (Array.isArray(data.vaults)) this.vaults = data.vaults;
+                    this.saveStorage();
+                    this.applyingRemote = false;
+                    return true;
+                },
+
+                mergeLedgers(server, local) {
+                    const mergeArr = (a, b) => {
+                        const m = new Map();
+                        (a || []).forEach(x => { if (x && x.id) m.set(x.id, x); });
+                        (b || []).forEach(x => { if (x && x.id && !m.has(x.id)) m.set(x.id, x); });
+                        return Array.from(m.values());
+                    };
+                    return {
+                        version: 5,
+                        pockets: mergeArr(server.pockets, local.pockets),
+                        transactions: mergeArr(server.transactions, local.transactions),
+                        baseSavings: Number(server.baseSavings !== undefined ? server.baseSavings : local.baseSavings) || 0,
+                        incomeSources: mergeArr(server.incomeSources, local.incomeSources),
+                        monthlyBudgets: Object.assign({}, server.monthlyBudgets || {}, local.monthlyBudgets || {}),
+                        vaults: mergeArr(server.vaults, local.vaults),
+                        savedAt: new Date().toISOString()
+                    };
+                },
+
+                async bootAccount(fromLogin) {
+                    if (!this.authToken) { this.syncState = 'local'; return; }
+                    this.syncState = 'syncing';
+                    try {
+                        const me = await this.apiFetch('/me');
+                        this.authUser = me.user;
+                        await this.loadLearnProfile();
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (!res.data) {
+                            // 云端还没有账本：把本机账本推上去
+                            this.syncRev = 0;
+                            this.syncDirty = true;
+                            await this.pushLedger();
+                            return;
+                        }
+                        if (!storedRev || fromLogin) {
+                            if (this.transactions.length > 0 && !storedRev) {
+                                // 本机已有账本但从未同步：合并后上云，避免覆盖任何一边
+                                const merged = this.mergeLedgers(res.data, this.ledgerSnapshot());
+                                this.syncRev = Number(res.rev || 0);
+                                localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                                this.applyLedgerData(merged);
+                                this.syncDirty = true;
+                                await this.pushLedger();
+                                this.toast('已合并本机账本与云端账本');
+                            } else {
+                                // 新设备首次登录：采用云端账本
+                                this.syncRev = Number(res.rev || 0);
+                                localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                                this.applyLedgerData(res.data);
+                                this.syncState = 'synced';
+                            }
+                            return;
+                        }
+                        if (Number(res.rev || 0) !== storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                            this.toast('已拉取另一台设备的最新账本');
+                        }
+                        this.syncState = 'synced';
+                    } catch (e) {
+                        if (e.status === 401) {
+                            this.clearAuth();
+                            this.toast('登录已过期，请重新登录');
+                        } else {
+                            this.syncState = 'error';
+                        }
+                    }
+                },
+
+                markDirty() {
+                    if (!this.authToken || this.applyingRemote) return;
+                    this.syncDirty = true;
+                    this.schedulePush();
+                },
+
+                schedulePush() {
+                    clearTimeout(this.syncTimer);
+                    this.syncTimer = setTimeout(() => this.pushLedger(), 900);
+                },
+
+                async pushLedger() {
+                    if (!this.authToken) return;
+                    if (this.syncBusy) { this.syncDirty = true; return; }
+                    this.syncBusy = true;
+                    this.syncState = 'syncing';
+                    try {
+                        const res = await this.apiFetch('/ledger', {
+                            method: 'PUT',
+                            body: { data: this.ledgerSnapshot(), baseRev: this.syncRev, device: this.deviceId }
+                        });
+                        this.syncRev = Number(res.rev || this.syncRev);
+                        this.syncDirty = false;
+                        this.syncState = 'synced';
+                        localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                    } catch (e) {
+                        if (e.status === 409 && e.data && e.data.server) {
+                            // 另一台设备先写了：以云端为准，避免互相覆盖
+                            const server = e.data.server;
+                            this.syncRev = Number(server.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            if (server.data) this.applyLedgerData(server.data);
+                            this.syncDirty = false;
+                            this.syncState = 'synced';
+                            this.toast('已同步另一台设备的最新账本');
+                        } else if (e.status === 401) {
+                            this.clearAuth();
+                            this.toast('登录已过期，请重新登录');
+                        } else {
+                            this.syncState = 'error';
+                        }
+                    } finally {
+                        this.syncBusy = false;
+                        if (this.syncDirty && this.authToken) this.schedulePush();
+                    }
+                },
+
+                async syncNow() {
+                    if (!this.authToken) return;
+                    if (this.syncDirty) { await this.pushLedger(); return; }
+                    this.syncState = 'syncing';
+                    try {
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (res && res.data && Number(res.rev || 0) !== storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                        }
+                        this.syncState = 'synced';
+                        this.toast('账本已是最新');
+                    } catch (e) {
+                        this.syncState = 'error';
+                        this.toast('同步失败，请检查网络');
+                    }
+                },
+
+                async autoPull() {
+                    if (!this.authToken || this.syncBusy || this.syncDirty) return;
+                    try {
+                        const res = await this.apiFetch('/ledger');
+                        const storedRev = Number(localStorage.getItem('pocket_sync_rev') || 0);
+                        if (res && res.data && Number(res.rev || 0) > storedRev) {
+                            this.syncRev = Number(res.rev || 0);
+                            localStorage.setItem('pocket_sync_rev', String(this.syncRev));
+                            this.applyLedgerData(res.data);
+                            this.toast('已同步另一台设备的最新账本');
+                        }
+                        this.syncState = 'synced';
+                    } catch (e) {
+                        if (e.status === 401) this.clearAuth();
+                    }
+                },
+
+                // ==================== 自主学习 ====================
+                async loadLearnProfile() {
+                    try {
+                        const res = await this.apiFetch('/learn/profile');
+                        if (res && res.profile) {
+                            this.learnProfile = Object.assign({ vocab: {}, type: {}, events: 0 }, res.profile);
+                        }
+                    } catch (e) {}
+                },
+
+                resolveTargetId(name, type) {
+                    const n = (name || '').trim();
+                    if (!n) return '';
+                    const inc = this.currentMonthIncomeSources.find(s => s.name === n) || this.incomeSources.find(s => s.name === n);
+                    if (type === 'INCOME' && inc) return inc.id;
+                    const p = this.pockets.find(x => x.name === n) || this.pockets.find(x => x.name && (x.name.includes(n) || n.includes(x.name)));
+                    if (p) return p.id;
+                    const v = this.vaults.find(x => x.name === n);
+                    if (v) return v.id;
+                    return inc ? inc.id : '';
+                },
+
+                learnedType(text) {
+                    const map = (this.learnProfile && this.learnProfile.type) || {};
+                    const key = (text || '').replace(/\s+/g, '');
+                    if (!key) return null;
+                    if (map[key] === 'INCOME' || map[key] === 'EXPENSE') return map[key];
+                    let best = null, len = 0;
+                    for (const k of Object.keys(map)) {
+                        if (k.length >= 4 && key.includes(k) && k.length > len) {
+                            best = map[k];
+                            len = k.length;
+                        }
+                    }
+                    return (best === 'INCOME' || best === 'EXPENSE') ? best : null;
+                },
+
+                learnedTarget(text, type) {
+                    const vocab = (this.learnProfile && this.learnProfile.vocab) || {};
+                    const t = (text || '').toLowerCase();
+                    let hit = null, len = 0;
+                    for (const token of Object.keys(vocab)) {
+                        if (!token || token.length < 2) continue;
+                        if (t.includes(token.toLowerCase()) && token.length > len) {
+                            hit = { token, target: vocab[token] };
+                            len = token.length;
+                        }
+                    }
+                    if (!hit) return null;
+                    const id = this.resolveTargetId(hit.target, type);
+                    if (!id) return null;
+                    return { pocketId: id, note: `按你的习惯记到「${this.getPocketName(id)}」` };
+                },
+
+                learnLocally(raw, corrected) {
+                    if (!corrected) return;
+                    const target = (corrected.target || '').trim();
+                    const note = (corrected.note || '').trim();
+                    if (target && note && note.length >= 2) {
+                        const tokens = [note, note.slice(0, 2), note.slice(0, 3)].filter(x => x.length >= 2);
+                        for (const token of tokens) this.learnProfile.vocab[token] = target;
+                    }
+                    if ((corrected.type === 'INCOME' || corrected.type === 'EXPENSE') && raw) {
+                        const token = raw.replace(/\s+/g, '').slice(0, 24);
+                        if (token.length >= 2) this.learnProfile.type[token] = corrected.type;
+                    }
+                },
+
+                trackCorrection(d) {
+                    if (!this.authToken || !d || !d.origin) return;
+                    const o = d.origin;
+                    const changed = o.type !== d.type
+                        || String(o.pocketId || '') !== String(d.pocketId || '')
+                        || Number(o.amount || 0) !== Number(d.amount || 0);
+                    if (!changed) return;
+                    const corrected = {
+                        type: d.type,
+                        amount: Number(d.amount) || 0,
+                        target: d.pocketId ? this.getPocketName(d.pocketId) : '',
+                        note: d.remark || ''
+                    };
+                    this.learnLocally(d.text || '', corrected);
+                    this.apiFetch('/learn/correct', {
+                        method: 'POST',
+                        body: { raw: d.text || '', original: o, corrected, source: 'confirm' }
+                    }).then(() => this.loadLearnProfile()).catch(() => {});
+                },
+
+                // ==================== AI 兜底解析 ====================
+                aiPockets() {
+                    const list = [];
+                    this.pockets.forEach(p => list.push({ name: p.name, type: 'EXPENSE' }));
+                    this.currentMonthIncomeSources.forEach(s => list.push({ name: s.name, type: 'INCOME' }));
+                    return list;
+                },
+
+                draftFromAi(item, text) {
+                    const type = item.type === 'INCOME' ? 'INCOME' : 'EXPENSE';
+                    const target = (item.target || '').trim();
+                    const pocketId = this.resolveTargetId(target, type);
+                    const d = {
+                        type,
+                        amount: Number(item.amount) || 0,
+                        pocketId,
+                        date: item.date || this.todayStr(),
+                        remark: (item.note || '').slice(0, 20),
+                        note: target ? `AI 归类「${target}」` : 'AI 已解析',
+                        text: text || ''
+                    };
+                    d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    return d;
+                },
+
+                removeChatMessage(msg) {
+                    if (!msg) return;
+                    const i = this.chatMessages.indexOf(msg);
+                    if (i >= 0) this.chatMessages.splice(i, 1);
+                },
+
+                async tryAiParse(text, quiet) {
+                    if (!this.authToken || this.aiBusy) return false;
+                    this.aiBusy = true;
+                    const tip = quiet ? null : this.pushChat('bot', '🤖 AI 正在理解…', { typing: true });
+                    try {
+                        const res = await this.apiFetch('/parse', {
+                            method: 'POST',
+                            body: { text: text || '', today: this.todayStr(), pockets: this.aiPockets() }
+                        });
+                        const drafts = ((res && res.items) || [])
+                            .map(it => this.draftFromAi(it, text))
+                            .filter(d => d.amount > 0);
+                        this.removeChatMessage(tip);
+                        if (!drafts.length) return false;
+                        this.applyDrafts(drafts, text);
+                        return true;
+                    } catch (e) {
+                        this.removeChatMessage(tip);
+                        if (!quiet) this.pushChat('bot', 'AI 暂时没连上，先用本地理解～');
+                        return false;
+                    } finally {
+                        this.aiBusy = false;
+                    }
+                },
+
+                async aiReparseDraft() {
+                    const d = this.chatDraft;
+                    if (!d) return;
+                    if (!this.authToken) { this.pushChat('bot', '登录后才能用 AI 重解析哦～'); return; }
+                    if (!d.text) { this.pushChat('bot', '这句话没有原文，手动改一下就好～'); return; }
+                    const ok = await this.tryAiParse(d.text);
+                    if (!ok) this.pushChat('bot', 'AI 也没太听明白，手动选一下分类就好～');
                 },
 
                 formatMonthTitle(ym) {
@@ -1939,6 +2531,8 @@
 
                 // 判断收入还是支出（按“每一笔”的片段来判断）
                 detectType(text) {
+                    const learned = this.learnedType(text || '');
+                    if (learned) return learned;
                     const t = text || '';
                     // 明确的支出说法：先判，避免“给…转”“还花呗”被当成收入
                     const strongExpense = /(花了|花掉|花去|花了钱|用完|用了|用掉|付了|支付|消费|买了|买|吃了|吃|喝了|喝|充了|交了|交费|交租|还了|还款|还花呗|还信用卡|还借呗|扣了|请客|送礼|罚款|缴|续费|打车|加油|停车|挂号|快递|理发|订了|转给)/;
@@ -1974,6 +2568,8 @@
 
                 // 匹配这笔账该落到哪个荷包 / 收入项目 / 小金库
                 matchTarget(text, type) {
+                    const learned = this.learnedTarget(text || '', type);
+                    if (learned) return learned;
                     const t = (text || '').toLowerCase();
 
                     if (type === 'INCOME') {
@@ -2140,7 +2736,7 @@
                     this.handleUtterance(text);
                 },
 
-                handleUtterance(text) {
+                async handleUtterance(text) {
                     // 上一句缺金额：这次只说数字，就拼起来
                     let input = text;
                     if (this.chatPendingText && /^\s*[0-9.０-９]+\s*$/.test(text)) {
@@ -2153,12 +2749,28 @@
                         this.chatPendingText = input;
                         this.chatDraft = null;
                         this.chatDraftQueue = [];
+                        // 完全没听出金额且有登录态时，交给 AI 再理解一次
+                        const hasNumber = /[0-9０-９一二两三四五六七八九十百千万]/.test(input);
+                        if (this.authToken && !hasNumber) {
+                            const ok = await this.tryAiParse(input);
+                            if (ok) { this.chatPendingText = ''; return; }
+                        }
                         this.pushChat('bot', '这句我还没听出金额～这笔大概多少钱？直接回个数字就行（比如 28）。');
                         return;
                     }
 
                     this.chatPendingText = '';
                     const drafts = list.map(p => this.draftFromParsed(p, input));
+                    // 本地听出了金额，但支出没能归到分类 → 让 AI 补一次归类
+                    if (this.authToken && drafts.some(d => d.type === 'EXPENSE' && !d.pocketId)) {
+                        const ok = await this.tryAiParse(input, true);
+                        if (ok) return;
+                    }
+                    this.applyDrafts(drafts, input);
+                },
+
+                applyDrafts(drafts, text) {
+                    if (!drafts || !drafts.length) return;
                     this.chatDraft = drafts[0];
                     this.chatDraftQueue = drafts.slice(1);
                     this.syncChatSelect();
@@ -2172,7 +2784,7 @@
                 },
 
                 draftFromParsed(p, text) {
-                    return {
+                    const d = {
                         type: p.type,
                         amount: p.amount,
                         pocketId: p.pocketId,
@@ -2181,6 +2793,8 @@
                         note: p.note,
                         text: text || p.text || ''
                     };
+                    d.origin = { type: d.type, amount: d.amount, pocketId: d.pocketId, date: d.date, remark: d.remark };
+                    return d;
                 },
 
                 describeDraft(d) {
@@ -2239,6 +2853,7 @@
                     if (!d) return;
                     const tx = this.commitDraft(d);
                     if (!tx) return;
+                    this.trackCorrection(d);
 
                     if (this.chatDraftQueue.length) {
                         this.chatDraft = this.chatDraftQueue.shift();
@@ -2258,6 +2873,7 @@
                     for (const d of all) {
                         const tx = this.commitDraft(d, true);
                         if (!tx) continue;
+                        this.trackCorrection(d);
                         ids.push(tx.id);
                         lines.push(`${tx.type === 'INCOME' ? '收入' : '支出'} ¥${this.formatNumber(tx.amount)} → ${this.getPocketName(tx.pocketId)}`);
                     }
@@ -2364,6 +2980,14 @@
                     return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                 }
             }
+        }
+    </script>
+    <script>
+        // PWA：注册 Service Worker（GitHub Pages 子路径下用相对 scope）
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+            });
         }
     </script>
 </body>
