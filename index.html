@@ -1651,7 +1651,7 @@
                         candidates.push({ num, score, index: m.index, end: m.index + m[0].length });
                     }
 
-                    const cnRe = /([零〇一二两三四五六七八九十百千万]+)\s*(块钱|元钱|块|元|圆|钱)?/g;
+                    const cnRe = /([零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+)\s*(块钱|元钱|块|元|圆|钱)?/g;
                     while ((m = cnRe.exec(t)) !== null) {
                         const num = this.cnToNumber(m[1]);
                         if (num === null || num <= 0) continue;
@@ -1700,7 +1700,7 @@
                         }
                     };
                     scan(t, /(\d+(?:\.\d{1,2})?)/g, false);
-                    scan(t, /([零〇一二两三四五六七八九十百千万]+)\s*(块钱|元钱|块|元|圆|钱)?/g, true);
+                    scan(t, /([零〇一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+)\s*(块钱|元钱|块|元|圆|钱)?/g, true);
                     return list.sort((a, b) => a.index - b.index);
                 },
 
@@ -1765,6 +1765,9 @@
                     const wholeDate = this.extractDate(text);
 
                     let clauses = this.splitClauses(text);
+                    // 连接词可能把“中午又吃了碗面14”切成“中午/吃了/碗面14”这类碎片，
+                    // 再对每段做一次无标点切分，避免夹在中间的短笔被吞掉
+                    clauses = clauses.flatMap(c => this.splitInlineMulti(c));
                     // 用空格隔开的多笔：“早饭8 午饭25”
                     if (clauses.length < 2) {
                         const sp = text.split(/\s+/).filter(Boolean);
@@ -1948,6 +1951,8 @@
                     if (/(发红包|给.{0,8}红包|随礼|份子钱|送礼)/.test(t)) return 'EXPENSE';
                     // 收红包是收入
                     if (/(收到红包|收红包|抢红包|收了个红包|收了个大红包)/.test(t)) return 'INCOME';
+                    // 别人还钱给我（“朋友还钱500”“小王还了我300”）是收入；注意“还朋友钱”仍是支出
+                    if (/(?:朋友|同事|同学|闺蜜|兄弟|姐妹|对象|老婆|老公|家人|亲戚|爸|妈|哥|姐|弟|妹|小王|小李|小张|小刘|老王|老张|室友|房东)\S{0,4}(?:还钱|还了我|还给我|还我|退给我|退我)/.test(t)) return 'INCOME';
                     // “别人给我转/还给我/给我钱”是收入（先于“给…转”判断）
                     if (/(给我转|转给我|给我转账|转账给我|还给我|退给我|打给我)/.test(t)) return 'INCOME';
                     if (/(?:转|打|给|发|退|还)(?:了)?我\s*(?:[0-9]|[一二两三四五六七八九十百千万]|块钱|元钱)/.test(t) && !/(买|吃|喝|花|付|交|充|请客)/.test(t)) return 'INCOME';
@@ -1978,7 +1983,7 @@
                             if (this.vaults.length) return { pocketId: this.vaults[0].id, note: `小金库「${this.vaults[0].name}」` };
                             return { pocketId: '', note: '通用存款池' };
                         }
-                        if (/(报销|退款|退钱|退了|退回|返现)/.test(t)) return { pocketId: '', note: '通用存款池' };
+                        if (/(报销|退款|退钱|退了|退回|返现|还钱|还我|还给我|还了我)/.test(t)) return { pocketId: '', note: '通用存款池' };
 
                         let best = null, bestScore = 0;
                         for (const s of this.currentMonthIncomeSources) {
@@ -1991,7 +1996,10 @@
                         }
                         if (best) return { pocketId: best.id, note: `收入项目「${best.name}」` };
                         const main = this.incomeSources.find(s => s.category === 'MAIN');
-                        if (main) return { pocketId: main.id, note: `收入项目「${main.name}」（可改）` };
+                        if (main) {
+                            const subHint = /(副业|兼职|稿费|外快|接单|项目)/.test(t) && main.category !== 'SUB' ? '疑似副业收入，' : '';
+                            return { pocketId: main.id, note: `收入项目「${main.name}」（${subHint}可改）` };
+                        }
                         return { pocketId: '', note: '通用存款池' };
                     }
 
@@ -2010,11 +2018,27 @@
                     if (best) return { pocketId: best.id, note: `小荷包「${best.name}」` };
                     // 没命中关键词但明显是“给谁钱/借给谁”，落到人情往来
                     const socialPocket = this.pockets.find(p => /人情|社交|往来|红包/.test(p.name || ''));
-                    if (socialPocket && /(给|送|借给|随礼|探望)/.test(t) && /(妈|爸|父母|爸妈|朋友|同事|同学|对象|老婆|老公|孩子|儿子|女儿|弟|妹|哥|姐|老师|亲戚|家里|长辈|奶奶|爷爷|外婆|外公)/.test(t)) {
+                    if (socialPocket && /(给|送|借给|还|随礼|探望)/.test(t) && /(妈|爸|父母|爸妈|朋友|同事|同学|对象|老婆|老公|孩子|儿子|女儿|弟|妹|哥|姐|老师|亲戚|家里|长辈|奶奶|爷爷|外婆|外公)/.test(t)) {
                         return { pocketId: socialPocket.id, note: `小荷包「${socialPocket.name}」` };
                     }
-                    if (this.pockets.length === 1) return { pocketId: this.pockets[0].id, note: `小荷包「${this.pockets[0].name}」（可改）` };
-                    return { pocketId: '', note: '请选择分类' };
+                    if (this.pockets.length === 1) {
+                        const only = this.pockets[0];
+                        // 推断这句话更像哪一类（打车→交通、话费→通讯、房租→住房…）
+                        let guess = '';
+                        for (const key of Object.keys(this.pocketKeywordDict)) {
+                            if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
+                        }
+                        const ownHit = (only.name || '').includes(guess) || this.pocketKeywords(only).some(kw => kw && t.includes(kw.toLowerCase()));
+                        const note = guess && !ownHit
+                            ? `疑似「${guess}」开销，暂记「${only.name}」（可改）`
+                            : `小荷包「${only.name}」（可改）`;
+                        return { pocketId: only.id, note };
+                    }
+                    let guess = '';
+                    for (const key of Object.keys(this.pocketKeywordDict)) {
+                        if ((this.pocketKeywordDict[key] || []).some(kw => kw && t.includes(kw.toLowerCase()))) { guess = key; break; }
+                    }
+                    return { pocketId: '', note: guess ? `请选择分类（疑似「${guess}」）` : '请选择分类' };
                 },
 
                 // 从原句里提取一个干净的备注
@@ -2028,12 +2052,12 @@
                     s = s.replace(/(?:早饭|早餐|早点|午饭|中饭|午饭|晚饭|晚餐|夜宵|宵夜)?没(?:吃|喝|买|花|用)/g, ' ');
                     s = s.replace(/[0-9０-９.]+/g, ' ');
                     s = s.replace(/[kK](?![a-zA-Z])/g, ' ');
-                    s = s.replace(/[一二两三四五六七八九十百千万]+(块钱|元钱|块|元|圆|钱)?/g, ' ');
+                    s = s.replace(/[一二两三四五六七八九十百千万壹贰叁肆伍陆柒捌玖拾佰仟萬]+(块钱|元钱|块|元|圆|钱)?/g, ' ');
                     s = s.replace(/[零〇]+(?=\s*(?:块钱|元钱|块|元|圆|钱|\d))/g, ' ');
                     s = s.replace(/(今天|今晚|今日|昨天|昨晚|昨日|前天|大前天|明天|后天|大后天|刚才|刚刚|上上个月|上个月|上月|下个月|下月|这个月|本月|月初|月底|月中|月末|上上|上周|这周|本周|星期[一二三四五六日天]|礼拜[一二三四五六日天]|周[一二三四五六日天]|\d+\s*[月号日天]|早上|早晨|上午|中午|下午|晚上|傍晚|夜里|半夜|凌晨|清晨|母亲节|父亲节|教师节|情人节|中秋节|端午节|春节|元旦|国庆节|国庆)/g, ' ');
-                    s = s.replace(/(花了|花掉|花去|花(?!生|椒|瓶|瓣|园|店|语|呗)|用了|用掉|付了|支付了|支付|消费了|消费|收到|收了|收入|赚了|赚到|到账|入账|进账|发工资|发了工资|存进|存入|存到|存起来|存了|攒了|攒到|攒起来|放进|转入|挪到|打赏|给了|转了|转我|转给|买了|吃了|喝了|点了|报了|看了|还款|一笔|记账|记一下|记录一下)/g, ' ');
-                    s = s.replace(/(我|你|他|她|它|我们|你们|他们|块钱|元钱|块|元|圆|钱|的|了|呢|啊|吧|呀|哦|嘛|嗯|呃|唉|那个|这个|就是|今天|昨天|请|帮我|麻烦|一共|总共|大概|差不多|不到|将近|左右|上下|下来|然后|还有|还|又|再|顺便|跟|和|与|给|帮|替|来|把|到|没吃|没喝|没买|没花|人均|aa|AA)/g, ' ');
-                    s = s.replace(/(个|杯|瓶|袋|盒|份|斤|公斤|克|双|件|条|张|只|人|次|顿|碗|盘|串|堆|点儿?|些|多|毛|角)/g, ' ');
+                    s = s.replace(/(花了|花掉|花去|花(?!生|椒|瓶|瓣|园|店|语|呗)|用了|用掉|付了|支付了|支付|消费了|消费|收到|收了|收入|赚了|赚到|到账|入账|进账|发工资|发工资了|发了工资|发了|存进|存入|存到|存起来|存了|攒了|攒到|攒起来|放进|转入|挪到|打赏|给了|转了|转我|转给|买了|吃了|喝了|点了|报了|看了|还款|一笔|记账|记一下|记录一下|记下|记上|记到|帮我记)/g, ' ');
+                    s = s.replace(/(我|你|他|她|它|我们|你们|他们|块钱|元钱|块|元|圆|钱|的|了|呢|啊|吧|呀|哦|嘛|嗯|呃|唉|那个|这个|就是|今天|昨天|请|帮我|麻烦|一共|总共|大概|差不多|不到|将近|左右|上下|下来|然后|还有|还|又|再|顺便|跟|和|与|给|帮|替|来|把|到|没吃|没喝|没买|没花|没(?=啥|吃|喝|买|花|用)|人均|aa|AA|就(?!业|餐|是|算|位)|也(?!许)|啥|随便|整整|整(?![理个天体齐洁])|共(?![享同产和])|吃吃|喝喝|买买|逛逛)/g, ' ');
+                    s = s.replace(/(个|杯|瓶|袋|盒|份|斤|公斤|克|双|件|条|张|只|人|次|顿|碗|盘|串|堆|包(?!子|括|装|邮|月|年|厢|袱)|点儿?|些|多|毛|角)/g, ' ');
                     s = s.replace(/[，。,.!！?？、\-—~～\s]+/g, ' ').trim();
                     // 句首动词剥离放在还原保护词之前，避免「请客」被剥成「客」
                     s = s.replace(/^(往|向)/, '').replace(/存$/, '').trim();
